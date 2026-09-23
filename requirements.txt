@@ -1,0 +1,8 @@
+google-adk
+python-dotenv
+mcp<2.0.0
+pydantic
+pytest
+langchain
+langgraph
+
