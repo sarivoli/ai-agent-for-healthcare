@@ -1136,12 +1136,292 @@ Successfully processed raw PHI query inside local host memory.
 
 ---
 
-## 🎓 Module 6: Clinical Identification, Confidence Scoring & HITL
+### 6.1 Concept Primer & Step-by-Step Breakdown
+- **The Core Problem:**
+  Autonomous AI applications in healthcare must **never** execute write operations (e.g., creating medication orders, updating patient charts) or finalize critical care plan remediations without explicit, authorized human clinician attestation. Additionally, raw LLM outputs must be grounded with mathematical confidence scores to prevent unverified recommendations.
+- **The Solution (Clinical Rule Engine & LangGraph HITL Interrupt Gate):**
+  We implement tri-fold clinical governance:
+  1. **Clinical Rules Engine (`ClinicalRuleEngine`)**: Evaluates HEDIS quality benchmarks (CDC HbA1c control, CBP blood pressure control), screening gaps (retinal eye exams, uACR nephropathy tests), and adherence risks. Assigns numerical confidence scores (0.00 to 1.00) based on LOINC code grounding and evidence recency.
+  2. **Prompt-Driven CRUD Operations**: Exposes FastMCP write tools (`create_medication_order`, `update_patient_note`, `add_care_gap_remediation`) with strict schema validation.
+  3. **LangGraph Human-in-the-Loop (HITL) Interrupt Gates**: Uses `interrupt()` to pause graph execution whenever write operations or high-confidence care gaps occur, returning `AWAITING_CLINICIAN_APPROVAL`. Graph execution only resumes when an authorized clinician submits an explicit approval or rejection decision.
 
-*(Pending Module 6 completion)*
+#### Architecture Data Flow:
+```text
+                               User Prompt / CRUD Order
+                                          │
+                                          ▼
+                         ┌─────────────────────────────────┐
+                         │      Clinical Rule Engine       │  (src/rules/rule_engine.py)
+                         │  - HEDIS CDC & CBP Rules        │
+                         │  - Confidence Scores (0.0-1.0)  │
+                         └────────────────┬────────────────┘
+                                          │
+                                [CareGaps & CRUD Actions]
+                                          │
+                                          ▼
+                         ┌─────────────────────────────────┐
+                         │   HITL Gate Node (interrupt())  │  (src/agents/hitl_agent.py)
+                         │   - Pauses Graph Execution      │
+                         │   - Status: PENDING_APPROVAL    │
+                         └────────────────┬────────────────┘
+                                          │
+                            [Clinician Attestation Decision]
+                                  /              \
+                        APPROVED /                \ REJECTED
+                                ▼                  ▼
+                   ┌───────────────────┐    ┌───────────────────┐
+                   │ Execute CRUD Tool │    │ Log Refusal &     │
+                   │ (Write to EHR DB) │    │ Revert Care Plan  │
+                   └─────────┬─────────┘    └─────────┬─────────┘
+                             │                        │
+                             └───────────┬────────────┘
+                                         │
+                                         ▼
+                         ┌─────────────────────────────────┐
+                         │    Synthesize Attested Summary  │
+                         └─────────────────────────────────┘
+```
+
+---
+
+### 6.2 Code Implementation Reference
+
+#### A. Clinical Rules Engine with Confidence Scoring (`src/rules/rule_engine.py`)
+```python
+class ClinicalRuleEngine:
+    def evaluate(self, raw_data: Dict[str, Any]) -> ClinicalRuleEvaluationResult:
+        # Calculates HEDIS CDC (HbA1c > 8.0%, conf 0.95), HEDIS CBP (BP >= 140, conf 0.92),
+        # overdue eye exam (conf 0.88), uACR check (conf 0.85), and GI adherence risk (conf 0.78).
+        ...
+```
+
+#### B. FastMCP CRUD Write Tools (`src/agents/tools.py` & `src/mcp_server/server.py`)
+```python
+@tool
+def create_medication_order(patient_id: str, drug_name: str, dosage: str, frequency: str = "daily") -> str:
+    # Action Guardrail + Database Write (Requires HITL Attestation)
+    ...
+```
+
+#### C. LangGraph HITL Interrupt Node & Pipeline (`src/agents/hitl_agent.py`)
+```python
+def hitl_gate_node(state: HITLAgentState) -> Dict[str, Any]:
+    if pending_actions and attestation_status not in ["APPROVED", "REJECTED"]:
+        # Pauses graph execution for clinician attestation
+        return {"attestation_status": "PENDING_APPROVAL", "final_summary": banner}
+    return {"attestation_status": status}
+```
+
+---
+
+### 6.3 How to Run the Module 6 Demo
+
+#### 🪟 Windows Terminal:
+```powershell
+# Run Module 6 HITL Demo:
+.venv\Scripts\python.exe scripts\demo_hitl_approval.py --mock
+```
+
+#### 🐧 Linux / 🍎 macOS Terminal:
+```bash
+# Run Module 6 HITL Demo:
+.venv/bin/python3 scripts/demo_hitl_approval.py --mock
+```
+
+#### 🧪 Automated Unit Tests (Cross-Platform):
+```bash
+# Module 6 Tests
+.venv\Scripts\python.exe -m pytest tests/test_hitl_approval.py
+
+# All Repository Tests (51 tests)
+.venv\Scripts\python.exe -m pytest tests/
+```
+
+---
+
+### 6.4 Exact Terminal Demo Output
+
+```text
+================================================================================
+ [HITL DEMO] MODULE 6 WORKING MILESTONE DEMO: CLINICAL RULES & HITL ATTESTATION
+================================================================================
+
+[SCENARIO 1] Executing Clinical Rule Engine with Confidence Scores for Patient 'P101'...
+--------------------------------------------------------------------------------
+ 🩺 CLINICAL RULE ENGINE & HEURISTIC CONFIDENCE SCORE DASHBOARD
+--------------------------------------------------------------------------------
+   • Overall Rule Confidence: 89.0%
+   • Requires Attestation:   True
+
+   [EVALUATED HEDIS QUALITY METRICS]
+      [FLAG]   | HEDIS CDC (HbA1c Control)              | Status: SUBOPTIMAL   | Conf: 0.95
+      [FLAG]   | HEDIS CBP (Blood Pressure Control)     | Status: SUBOPTIMAL   | Conf: 0.92
+
+   [IDENTIFIED CARE GAPS WITH CONFIDENCE SCORES & EVIDENCE]
+      [MEDIUM] | Gap: Suboptimal Glycemic Control                   | Conf: 0.95
+                 Evidence: LOINC: 4548-4 (HbA1c: 8.4%, Date: Recent)
+                 Recommendation: Adjust diabetes therapy; reinforce lifestyle and medication adherence counselling.
+      [MEDIUM] | Gap: Stage 1 Systolic Hypertension                 | Conf: 0.92
+                 Evidence: LOINC: 8480-6 (Systolic BP: 142.0 mmHg, Date: Recent)
+                 Recommendation: Initiate daily home BP log and evaluate anti-hypertensive dose adjustment.
+      [MEDIUM] | Gap: Diabetic Retinal Eye Examination Overdue      | Conf: 0.88
+                 Evidence: EHR Screening Registry (No exam documented in last 12 months)
+                 Recommendation: Schedule annual dilated retinal eye examination with ophthalmology.
+      [LOW]    | Gap: Urine Albumin-to-Creatinine Ratio (uACR) Overdue | Conf: 0.85
+                 Evidence: EHR Nephropathy Screening Registry (No uACR check in last 12 months)
+                 Recommendation: Order spot urine uACR to assess diabetic nephropathy risk.
+      [MEDIUM] | Gap: Metformin GI Intolerance & Skipped Doses      | Conf: 0.78
+                 Evidence: Physician Note: 'Dr. Sarah Jenkins, MD'
+                 Recommendation: Consider switching to Metformin Extended-Release (ER) to improve GI tolerance.
+--------------------------------------------------------------------------------
+
+================================================================================
+ 🛑 SCENARIO 2 & 3: PROMPT-DRIVEN CRUD ORDER & HITL INTERRUPT PAUSE
+================================================================================
+
+[DEMO] Submitting Prompt-Driven Medication Order Query:
+   Submitted Prompt: "Clinical Decision Support: Please order Metformin 500mg ER daily for patient P101."
+
+   Executing LangGraph HITL Agent Pipeline...
+
+   -> Graph Execution Status: [PENDING_APPROVAL]
+   -> LangGraph Paused Execution via interrupt()
+   -> Database Write Suspended Awaiting Clinician Decision
+
+================================================================================
+ ✅ SCENARIO 4: CLINICIAN ATTESTATION SUBMISSION (APPROVAL BRANCH)
+================================================================================
+
+[DEMO 4] Attending Clinician Submits APPROVAL Decision for Session 'SESS-HITL-APPR-040a'...
+
+   -> Graph Resumed Execution Status: [APPROVED]
+   -> Database Write Executed Successfully!
+
+### Executed Database CRUD Actions:
+- **[EXECUTED]** {"status": "success", "order_id": "RX-NEW-503", "medication": {"rx_id": "RX-NEW-503", "drug_name": "Metformin 500mg", "status": "active", "frequency": "daily", "ordered_date": "2026-09-23"}}
+
+================================================================================
+ ❌ SCENARIO 5: CLINICIAN ATTESTATION SUBMISSION (REJECTION BRANCH)
+================================================================================
+
+[DEMO 5] Initiating new CRUD query for session 'SESS-HITL-REJ-a9ce'...
+   Attending Clinician Submits REJECTION Decision...
+
+   -> Graph Resumed Execution Status: [REJECTED]
+   -> Database Write Cancelled!
+
+================================================================================
+ [SUCCESS] MODULE 6 HITL DEMO COMPLETE: Confidence Scores, CRUD Tools & Attestation Validated!
+================================================================================
+```
 
 ---
 
 ## 🎓 Module 7: Production Hardening, RBAC, Web UI & Deployment
 
-*(Pending Module 7 completion)*
+### 7.1 Concept Primer: Enterprise Hardening & Web UI Orchestration
+Production healthcare deployments require robust security controls, session durability, fault tolerance, and responsive user experiences:
+
+1. **OAuth 2.1 & Field-Level Role-Based Access Control (RBAC):**
+   - OAuth 2.1 tokens encapsulate caller identity, department, and role scopes (`Clinician`, `Analyst`, `Auditor`).
+   - Field-level redaction automatically masks sensitive attributes based on role permissions (e.g., masking provider note authors for `Analyst` callers, redacting patient MRNs/names for `Auditor` compliance logging).
+2. **State Checkpointing & Ticket Management:**
+   - Persistent `MemorySaver` checkpointers save LangGraph workflow snapshots indexed by `thread_id`.
+   - When an agent pauses at an `interrupt()` gate, the ticket manager generates a ticket record containing status (`AWAITING_CLINICIAN_APPROVAL`), ticket ID, and an estimated ETA badge (e.g. `15 minutes (Clinician Queue)`).
+   - This allows users to disconnect, refresh their browser, return later, and check status or resume execution without losing state.
+3. **Fault-Tolerant Input Preservation:**
+   - Raw user prompts are saved in draft storage prior to tool or node execution.
+   - If a backend exception occurs, error interceptors log security audit telemetry while preserving the user's prompt draft so they can retry without retyping.
+4. **Interactive Web Application & Containerization:**
+   - FastAPI server exposing REST and SSE streaming chat endpoints (`/api/chat`, `/api/tickets/pending`, `/api/hitl/approve`).
+   - A glassmorphic dark-mode web application dashboard supporting real-time chat, persona switching, and clinician attestation modals.
+   - One-command deployment via `Dockerfile` and `docker-compose.yml`.
+
+---
+
+### 7.2 Execution Instructions (Dual OS & Docker)
+
+#### 🪟 Windows PowerShell:
+```powershell
+# Step 1: Run Module 7 Milestone Demo Script
+.venv\Scripts\python.exe -m scripts.demo_production_ui
+
+# Step 2: Run Unit & Integration Tests
+.venv\Scripts\python.exe -m pytest tests/test_production_hardening.py
+
+# Step 3: Launch Local FastAPI Web Server
+.venv\Scripts\python.exe -m uvicorn src.api.server:app --port 8000 --reload
+# Open http://localhost:8000 in your browser
+
+# Step 4: Run via Docker Container
+docker-compose up --build
+```
+
+#### 🐧 Linux / 🍎 macOS Terminal:
+```bash
+# Step 1: Run Module 7 Milestone Demo Script
+.venv/bin/python3 -m scripts.demo_production_ui
+
+# Step 2: Run Unit & Integration Tests
+.venv/bin/python3 -m pytest tests/test_production_hardening.py
+
+# Step 3: Launch Local FastAPI Web Server
+.venv/bin/python3 -m uvicorn src.api.server:app --port 8000 --reload
+# Open http://localhost:8000 in your browser
+
+# Step 4: Run via Docker Container
+docker-compose up --build
+```
+
+---
+
+### 7.3 Milestone Demo Output
+
+```text
+================================================================================
+      MODULE 7 WORKING MILESTONE DEMO: PRODUCTION HARDENING & WEB UI
+================================================================================
+
+--- [SCENARIO 1: OAuth 2.1 Token Verification & Field-Level RBAC] ---
+
+Role: Clinician (Cardiology)
+  • Sub: usr_clinician_501
+  • Allowed to Prescribe Meds: True
+  • Unredacted Note Author: Dr. Sarah Jenkins
+
+Role: Analyst (Quality Management)
+  • Sub: usr_analyst_881
+  • Allowed to Prescribe Meds: False
+  • Filtered Note Author: [REDACTED_FOR_ANALYST]
+
+Role: Auditor (Compliance & Legal)
+  • Sub: usr_auditor_302
+  • Allowed to Prescribe Meds: False
+  • Filtered Name: [REDACTED_BY_AUDITOR_RBAC]
+
+--- [SCENARIO 2: Prompt-Driven CRUD & Instant HITL Ticket ETA Generation] ---
+Status: AWAITING_CLINICIAN_APPROVAL
+  • Ticket ID: HITL-20260923-25467B
+  • Estimated ETA: 15 minutes (Clinician Queue)
+  • Pending Action: CREATE_MEDICATION_ORDER
+  • Action Params: {'action_type': 'CREATE_MEDICATION_ORDER', 'patient_id': 'P101', 'drug_name': 'Lisinopril', 'dosage': '20mg', 'frequency': 'daily'}
+
+--- [SCENARIO 3: Querying Pending Attestation Queue] ---
+Total Pending Tickets in Queue: 1
+  [QUEUE ITEM] Ticket HITL-20260923-25467B | Action: CREATE_MEDICATION_ORDER | ETA: 15 minutes (Clinician Queue)
+
+--- [SCENARIO 4: Clinician Attestation & LangGraph State Resumption] ---
+Attestation Status: APPROVED
+Message: Ticket HITL-20260923-25467B approved. Order executed successfully.
+
+--- [SCENARIO 5: Fault-Tolerant Input Preservation on Exception] ---
+Execution Result Status: agent_error
+Preserved Draft Prompt: 'Order Metformin 1000mg for P101'
+User Input Preserved: True
+Recommendation: Your input has been safely preserved. You may retry your request or adjust your prompt.
+
+================================================================================
+  MODULE 7 DEMONSTRATION COMPLETE: ALL PRODUCTION CONTROL LOOPS VERIFIED
+================================================================================
+```
+

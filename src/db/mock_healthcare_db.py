@@ -19,6 +19,10 @@ class HealthcareDatabase:
         self._clinical_notes: Dict[str, List[Dict[str, Any]]] = {}
         self._load_database()
 
+    def reset(self):
+        """Reset in-memory database to initial state."""
+        self._load_database()
+
     def _load_database(self):
         if self.data_file.exists():
             with open(self.data_file, "r", encoding="utf-8") as f:
@@ -78,6 +82,51 @@ class HealthcareDatabase:
     def get_clinical_notes(self, patient_id: str) -> List[Dict[str, Any]]:
         patient_id_clean = patient_id.upper().strip()
         return self._clinical_notes.get(patient_id_clean, [])
+
+    def create_medication_order(self, patient_id: str, drug_name: str, dosage: str, frequency: str) -> Dict[str, Any]:
+        patient_id_clean = patient_id.upper().strip()
+        order_id = f"RX-NEW-{len(self.get_medications(patient_id_clean)) + 501}"
+        new_med = {
+            "rx_id": order_id,
+            "drug_name": f"{drug_name} {dosage}",
+            "status": "active",
+            "frequency": frequency,
+            "ordered_date": "2026-09-23"
+        }
+        for record in self._raw_data:
+            if record.get("pat_id", "").upper() == patient_id_clean:
+                if "prescriptions" not in record:
+                    record["prescriptions"] = []
+                record["prescriptions"].append(new_med)
+                break
+        return {"status": "success", "order_id": order_id, "medication": new_med}
+
+    def update_patient_note(self, patient_id: str, note_content: str, author: str) -> Dict[str, Any]:
+        patient_id_clean = patient_id.upper().strip()
+        note_id = f"NOTE-NEW-{len(self.get_clinical_notes(patient_id_clean)) + 201}"
+        new_note = {
+            "note_id": note_id,
+            "author": author,
+            "date": "2026-09-23",
+            "category": "Progress Note Update",
+            "content": note_content
+        }
+        if patient_id_clean not in self._clinical_notes:
+            self._clinical_notes[patient_id_clean] = []
+        self._clinical_notes[patient_id_clean].append(new_note)
+        return {"status": "success", "note_id": note_id, "note": new_note}
+
+    def add_care_gap_remediation(self, patient_id: str, gap_id: str, action_taken: str) -> Dict[str, Any]:
+        patient_id_clean = patient_id.upper().strip()
+        remediation_id = f"REM-{gap_id}-001"
+        record = {
+            "remediation_id": remediation_id,
+            "patient_id": patient_id_clean,
+            "gap_id": gap_id,
+            "action_taken": action_taken,
+            "timestamp": "2026-09-23T18:45:00Z"
+        }
+        return {"status": "success", "remediation_id": remediation_id, "remediation": record}
 
 
 # Global Singleton Database Instance

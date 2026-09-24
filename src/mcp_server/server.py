@@ -71,5 +71,44 @@ def get_clinical_notes(patient_id: str) -> str:
         return json.dumps({"status": "validation_error", "message": str(e)})
 
 
+@mcp_server.tool(
+    name="create_medication_order",
+    description="Prompt-driven CRUD: Creates a new medication prescription order for a given patient_id."
+)
+def create_medication_order(patient_id: str, drug_name: str, dosage: str, frequency: str = "daily") -> str:
+    try:
+        clean_id = validate_patient_id(patient_id)
+        res = db.create_medication_order(clean_id, drug_name, dosage, frequency)
+        return json.dumps(res, indent=2)
+    except ActionValidationError as e:
+        return json.dumps({"status": "validation_error", "message": str(e)})
+
+
+@mcp_server.tool(
+    name="update_patient_note",
+    description="Prompt-driven CRUD: Appends a new physician progress note or clinical update for a given patient_id."
+)
+def update_patient_note(patient_id: str, note_content: str, author: str = "Attending Physician, MD") -> str:
+    try:
+        clean_id = validate_patient_id(patient_id)
+        res = db.update_patient_note(clean_id, note_content, author)
+        return json.dumps(res, indent=2)
+    except ActionValidationError as e:
+        return json.dumps({"status": "validation_error", "message": str(e)})
+
+
+@mcp_server.tool(
+    name="add_care_gap_remediation",
+    description="Prompt-driven CRUD: Documents action taken to remediate a clinical care gap for a patient_id."
+)
+def add_care_gap_remediation(patient_id: str, gap_id: str, action_taken: str) -> str:
+    try:
+        clean_id = validate_patient_id(patient_id)
+        res = db.add_care_gap_remediation(clean_id, gap_id, action_taken)
+        return json.dumps(res, indent=2)
+    except ActionValidationError as e:
+        return json.dumps({"status": "validation_error", "message": str(e)})
+
+
 if __name__ == "__main__":
     mcp_server.run()

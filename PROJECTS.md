@@ -29,8 +29,8 @@ The **Enterprise Healthcare MCP & Multi-Agent Platform** is a production-grade, 
 
 | **Module 4** | Multi-Agent Orchestration | `python -m scripts.demo_multi_agent` | `docs/features/03_multi_agent_orchestration.md` | ✅ Completed |
 | **Module 5** | Dual-LLM PHI Router | `python -m scripts.demo_dual_llm_router` | `docs/features/04_dual_llm_phi_router.md` | ✅ Completed |
-| **Module 6** | Clinical Rules & HITL | `python -m scripts.demo_hitl_approval` | `docs/features/05_clinical_rules_and_hitl.md` | ⏹️ Pending |
-| **Module 7** | Production Hardening & UI | `docker-compose up` | `docs/features/06_production_hardening_and_ui.md` | ⏹️ Pending |
+| **Module 6** | Clinical Rules & HITL | `python -m scripts.demo_hitl_approval` | `docs/features/05_clinical_rules_and_hitl.md` | ✅ Completed |
+| **Module 7** | Production Hardening & UI | `python -m scripts.demo_production_ui` | `docs/features/06_production_hardening_and_ui.md` | ✅ Completed |
 
 ---
 

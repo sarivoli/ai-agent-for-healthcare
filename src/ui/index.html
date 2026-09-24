@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Healthcare MCP & Multi-Agent Platform</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="brand">
+                <div class="logo-icon">❖</div>
+                <div>
+                    <h1>Healthcare AI Platform</h1>
+                    <span class="subtitle">MCP Server • Dual-LLM Router • LangGraph HITL Gates</span>
+                </div>
+            </div>
+            <div class="header-controls">
+                <div class="role-selector-group">
+                    <label for="role-select">Active Role (RBAC):</label>
+                    <select id="role-select" class="styled-select">
+                        <option value="Clinician">🩺 Clinician (Full Access + Attest)</option>
+                        <option value="Analyst">📊 Quality Analyst (De-identified)</option>
+                        <option value="Auditor">🛡️ Compliance Auditor (Masked PHI)</option>
+                    </select>
+                </div>
+                <div class="status-indicator online">
+                    <span class="dot"></span> System Active
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <div class="workspace">
+            <!-- Left Sidebar: Patient & Controls -->
+            <aside class="sidebar">
+                <div class="card patient-card">
+                    <h3>Patient Context</h3>
+                    <select id="patient-select" class="styled-select wide">
+                        <option value="P101">P101 - Eleonora Vance (Type 2 Diabetes)</option>
+                        <option value="P102">P102 - Marcus Holloway (Hypertension)</option>
+                    </select>
+                    <div id="patient-summary" class="patient-info-box">
+                        <div class="info-row"><span>MRN:</span> <strong id="pat-mrn">P101</strong></div>
+                        <div class="info-row"><span>Age / Sex:</span> <strong id="pat-demographics">54F</strong></div>
+                        <div class="info-row"><span>Condition:</span> <span class="badge warning">Diabetes T2</span></div>
+                    </div>
+                </div>
+
+                <div class="card prompts-card">
+                    <h3>Quick Test Scenarios</h3>
+                    <button class="prompt-chip" onclick="sendQuickPrompt('Analyze patient P101 for care gaps and HEDIS quality compliance.')">
+                        📊 HEDIS & Care Gap Analysis
+                    </button>
+                    <button class="prompt-chip" onclick="sendQuickPrompt('Prescribe Lisinopril 20mg daily for patient P101 due to elevated BP.')">
+                        ✍️ Order Medication (Triggers HITL)
+                    </button>
+                    <button class="prompt-chip" onclick="sendQuickPrompt('Update clinical progress note for patient P101 noting diet compliance.')">
+                        📝 Update Clinical Note (HITL)
+                    </button>
+                    <button class="prompt-chip" onclick="sendQuickPrompt('Get patient summary for P101 and check recent lab results.')">
+                        🔍 General Clinical Summary
+                    </button>
+                </div>
+
+                <div class="card ticket-panel">
+                    <div class="panel-header">
+                        <h3>Attestation Queue</h3>
+                        <span id="ticket-count-badge" class="badge neutral">0 Pending</span>
+                    </div>
+                    <div id="pending-tickets-list" class="tickets-list">
+                        <p class="empty-text">No pending tickets awaiting attestation.</p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Right Panel: Chat & Workflow Feed -->
+            <main class="chat-container">
+                <div id="chat-messages" class="messages-feed">
+                    <div class="message system">
+                        <div class="avatar">❖</div>
+                        <div class="content">
+                            <h4>Welcome to Enterprise Healthcare Multi-Agent Platform</h4>
+                            <p>This session is monitored by the <strong>Dual-LLM PHI Privacy Router</strong> and <strong>LangGraph Clinical Supervisor</strong>. Ask a question or trigger a prompt-driven CRUD action to test Human-in-the-Loop gates.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input Dock -->
+                <div class="input-dock">
+                    <div class="input-wrapper">
+                        <textarea id="prompt-input" placeholder="Type a clinical inquiry or prompt-driven action (e.g., 'Order Metformin 500mg for P101')..." rows="2"></textarea>
+                        <button id="send-btn" onclick="submitPrompt()" class="primary-btn">
+                            <span>Send</span> ➔
+                        </button>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Script -->
+    <script src="/static/app.js"></script>
+</body>
+</html>

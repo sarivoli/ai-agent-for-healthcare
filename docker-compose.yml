@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  healthcare-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: healthcare_mcp_platform
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - LOG_LEVEL=info
+      - MOCK_MODE=true
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3

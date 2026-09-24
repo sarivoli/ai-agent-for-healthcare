@@ -73,10 +73,54 @@ def get_clinical_notes(patient_id: str) -> str:
         return json.dumps({"status": "validation_error", "message": str(e)})
 
 
+@tool
+def create_medication_order(patient_id: str, drug_name: str, dosage: str, frequency: str = "daily") -> str:
+    """
+    Prompt-driven CRUD: Creates a new medication prescription order for a given patient.
+    Requires Human-in-the-Loop (HITL) clinician attestation.
+    """
+    try:
+        clean_id = validate_patient_id(patient_id)
+        res = db.create_medication_order(clean_id, drug_name, dosage, frequency)
+        return json.dumps(res)
+    except ActionValidationError as e:
+        return json.dumps({"status": "validation_error", "message": str(e)})
+
+
+@tool
+def update_patient_note(patient_id: str, note_content: str, author: str = "Attending Physician, MD") -> str:
+    """
+    Prompt-driven CRUD: Appends a new physician progress note or clinical update for a patient.
+    Requires Human-in-the-Loop (HITL) clinician attestation.
+    """
+    try:
+        clean_id = validate_patient_id(patient_id)
+        res = db.update_patient_note(clean_id, note_content, author)
+        return json.dumps(res)
+    except ActionValidationError as e:
+        return json.dumps({"status": "validation_error", "message": str(e)})
+
+
+@tool
+def add_care_gap_remediation(patient_id: str, gap_id: str, action_taken: str) -> str:
+    """
+    Prompt-driven CRUD: Documents clinical action taken to remediate a care gap.
+    """
+    try:
+        clean_id = validate_patient_id(patient_id)
+        res = db.add_care_gap_remediation(clean_id, gap_id, action_taken)
+        return json.dumps(res)
+    except ActionValidationError as e:
+        return json.dumps({"status": "validation_error", "message": str(e)})
+
+
 # List of all available clinical tools for the agent
 CLINICAL_TOOLS = [
     get_patient_demographics,
     get_lab_results,
     get_medications,
-    get_clinical_notes
+    get_clinical_notes,
+    create_medication_order,
+    update_patient_note,
+    add_care_gap_remediation
 ]

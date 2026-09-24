@@ -558,3 +558,8 @@ def run_multi_agent_pipeline(
         result["telemetry_audit"]["performance_telemetry"]["latency_seconds"] = round(total_latency, 3)
 
     return result
+
+
+# Compiled default Multi-Agent application instance
+multi_agent_app = build_multi_agent_graph()
+

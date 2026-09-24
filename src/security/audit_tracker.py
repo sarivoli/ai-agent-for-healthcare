@@ -23,6 +23,18 @@ class AuditTracker:
         self.reports_dir = reports_dir
         self.reports_dir.mkdir(parents=True, exist_ok=True)
 
+    def log_event(self, event_type: str, details: Dict[str, Any]):
+        """Log audit incident or system event to audit report store."""
+        timestamp = datetime.now(timezone.utc).isoformat()
+        log_payload = {
+            "timestamp": timestamp,
+            "event_type": event_type,
+            "details": details
+        }
+        event_path = self.reports_dir / f"EVENT-{int(time.time())}.json"
+        with open(event_path, "w", encoding="utf-8") as f:
+            json.dump(log_payload, f, indent=2)
+
     def extract_token_metrics(self, messages: List[Any]) -> Dict[str, Any]:
         """
         Extracts prompt, completion, and total tokens from message usage metadata.
