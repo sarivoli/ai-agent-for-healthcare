@@ -410,3 +410,213 @@ body {
 .primary-btn:hover {
     box-shadow: 0 0 12px rgba(0, 210, 255, 0.4);
 }
+
+/* ==============================================================================
+   Publication-Grade Markdown & Clinical Report Typography
+   ============================================================================== */
+
+.clinical-h2 {
+    font-family: var(--font-heading);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 14px 0 8px 0;
+    letter-spacing: -0.2px;
+}
+
+.clinical-h3 {
+    font-family: var(--font-heading);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    margin: 12px 0 6px 0;
+}
+
+.clinical-h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    margin: 10px 0 4px 0;
+}
+
+.clinical-para {
+    margin: 6px 0;
+    line-height: 1.6;
+    color: var(--text-primary);
+}
+
+.spacer {
+    height: 8px;
+}
+
+.clinical-divider {
+    border: 0;
+    border-top: 1px solid var(--border-color);
+    margin: 14px 0;
+}
+
+/* Responsive Clinical Data Tables */
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    margin: 14px 0;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: rgba(10, 14, 23, 0.6);
+}
+
+.clinical-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    text-align: left;
+}
+
+.clinical-table thead tr {
+    background: rgba(255, 255, 255, 0.06);
+    border-bottom: 2px solid var(--border-color);
+}
+
+.clinical-table th {
+    padding: 10px 14px;
+    color: var(--accent-cyan);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.clinical-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+
+.clinical-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.clinical-table tbody tr:hover {
+    background: rgba(0, 136, 255, 0.04);
+}
+
+/* Clinical Lists */
+.clinical-list {
+    margin: 8px 0 10px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.clinical-list li {
+    line-height: 1.5;
+    color: var(--text-primary);
+}
+
+.clinical-list.ordered {
+    list-style-type: decimal;
+}
+
+/* Callouts & Quotes */
+.clinical-callout {
+    border-left: 3px solid var(--accent-cyan);
+    background: rgba(0, 210, 255, 0.06);
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    margin: 10px 0;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.inline-code {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--accent-cyan);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.code-block {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border-color);
+    padding: 12px;
+    border-radius: 8px;
+    margin: 10px 0;
+    overflow-x: auto;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* ==============================================================================
+   Graceful Incident Notification Box & Draft Preservation Dock
+   ============================================================================== */
+
+.graceful-error-content {
+    border: 1px solid var(--accent-warning) !important;
+    background: rgba(255, 183, 3, 0.05) !important;
+}
+
+.graceful-error-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 183, 3, 0.2);
+    padding-bottom: 8px;
+    margin-bottom: 6px;
+}
+
+.incident-badge {
+    background: rgba(255, 183, 3, 0.2);
+    color: var(--accent-warning);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: monospace;
+    font-weight: 600;
+}
+
+.graceful-recommendation {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+}
+
+.draft-restore-dock {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.draft-indicator {
+    font-size: 12px;
+    color: var(--accent-success);
+    font-weight: 500;
+}
+
+.btn-restore-draft {
+    background: rgba(0, 136, 255, 0.2);
+    color: var(--accent-cyan);
+    border: 1px solid var(--accent-cyan);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-restore-draft:hover {
+    background: var(--accent-cyan);
+    color: #000;
+    box-shadow: 0 0 10px rgba(0, 210, 255, 0.4);
+}

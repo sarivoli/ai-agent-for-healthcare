@@ -27,6 +27,7 @@ from src.agents.prompts import (
 from src.security.input_guardrails import input_guardrail_engine
 from src.security.quota_manager import quota_manager, QuotaState, QuotaContext
 from src.security.audit_tracker import audit_tracker
+from src.utils.text_extractor import extract_message_text
 
 load_dotenv()
 
@@ -261,11 +262,15 @@ def get_configured_llm(persona: str = "physician", force_mock: bool = False) -> 
     # Use Gemini if key is provided and not explicitly set to mock
     if google_api_key and provider != "mock":
         try:
+            import warnings
+            warnings.filterwarnings("ignore", category=UserWarning, module="langchain_google_genai")
+            import logging
+            logging.getLogger("google.genai").setLevel(logging.ERROR)
+            logging.getLogger("google_genai").setLevel(logging.ERROR)
+
             from langchain_google_genai import ChatGoogleGenerativeAI
-            # Use gemini-3.6-flash endpoint with appropriate temperature for clinical accuracy
             return ChatGoogleGenerativeAI(
                 model="gemini-3.6-flash",
-                temperature=0.1,
                 google_api_key=google_api_key
             )
         except Exception:
@@ -299,7 +304,7 @@ def build_single_agent_graph(llm: Optional[BaseChatModel] = None):
         prompt_text = ""
         for m in state.get("messages", []):
             if isinstance(m, HumanMessage):
-                prompt_text = str(m.content)
+                prompt_text = extract_message_text(m.content)
 
         scan_result = input_guardrail_engine.scan(prompt_text)
         if not scan_result.is_allowed:
@@ -346,28 +351,15 @@ def build_single_agent_graph(llm: Optional[BaseChatModel] = None):
 
     def synthesize_node(state: ClinicalAgentState) -> Dict[str, Any]:
         """Final node: extracts summary, conducts grounding audit, and tracks token quota."""
-        def _extract_text(content: Any) -> str:
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                parts = []
-                for item in content:
-                    if isinstance(item, dict) and "text" in item:
-                        parts.append(item["text"])
-                    elif isinstance(item, str):
-                        parts.append(item)
-                return "\n".join(parts)
-            return str(content)
-
         messages = state.get("messages", [])
         last_ai_content = ""
         for m in reversed(messages):
             if isinstance(m, AIMessage) and m.content and not m.tool_calls:
-                last_ai_content = _extract_text(m.content)
+                last_ai_content = extract_message_text(m.content)
                 break
         
         if not last_ai_content and messages:
-            last_ai_content = _extract_text(messages[-1].content)
+            last_ai_content = extract_message_text(messages[-1].content)
 
         # Telemetry & Quota Tracking
         session_id = state.get("session_id", f"SESS-{uuid.uuid4().hex[:6]}")

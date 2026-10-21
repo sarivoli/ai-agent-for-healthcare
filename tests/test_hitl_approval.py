@@ -92,3 +92,42 @@ def test_hitl_graph_attestation_rejection_branch():
     assert resumed["attestation_status"] == "REJECTED"
     assert "CLINICIAN REJECTED SUMMARY" in resumed["final_summary"]
     assert any(r.get("status") == "rejected" for r in resumed["execution_results"])
+
+
+def test_user_prompt_update_progress_note_diet_compliance():
+    """Verifies that progress note update for diet compliance triggers HITL UPDATE_PATIENT_NOTE action."""
+    session_id = "TEST-HITL-NOTE-001"
+    prompt = "Update clinical progress note for patient P101 noting diet compliance."
+    result = run_hitl_agent_pipeline(patient_id="P101", session_id=session_id, custom_prompt=prompt, force_mock=True)
+
+    assert result["attestation_status"] == "PENDING_APPROVAL"
+    assert len(result["pending_actions"]) > 0
+    act = result["pending_actions"][0]
+    assert act["action_type"] == "UPDATE_PATIENT_NOTE"
+    assert "P101" in act["reason"]
+    assert "diet" in act["note_content"].lower() or "compliant" in act["note_content"].lower()
+
+
+def test_user_prompt_get_patient_summary_and_labs():
+    """Verifies that requesting patient summary and labs returns structured clinical summary with labs."""
+    session_id = "TEST-SUMMARY-LABS-001"
+    prompt = "Get patient summary for P101 and check recent lab results."
+    result = run_hitl_agent_pipeline(patient_id="P101", session_id=session_id, custom_prompt=prompt, force_mock=True)
+
+    summary = result.get("final_summary", "")
+    assert "CLINICAL PATIENT SUMMARY & LABORATORY REPORT" in summary
+    assert "Hemoglobin A1c" in summary or "8.4 %" in summary
+    assert "Systolic Blood Pressure" in summary or "142.0 mmHg" in summary
+
+
+def test_user_prompt_care_gap_and_hedis_analysis():
+    """Verifies that care gap and HEDIS analysis returns structured Markdown table report without raw JSON."""
+    session_id = "TEST-HEDIS-REPORT-001"
+    prompt = "Analyze patient P101 for care gaps and HEDIS quality compliance."
+    result = run_hitl_agent_pipeline(patient_id="P101", session_id=session_id, custom_prompt=prompt, force_mock=True)
+
+    summary = result.get("final_summary", "")
+    assert "HEDIS QUALITY & CLINICAL CARE GAP COMPLIANCE REPORT" in summary or "Identified Clinical Care Gaps" in summary
+    assert "HEDIS CDC" in summary or "GAP-CDC-002" in summary
+    assert "{" not in summary or "json.dumps" not in summary
+

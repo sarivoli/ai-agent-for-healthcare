@@ -1425,3 +1425,63 @@ Recommendation: Your input has been safely preserved. You may retry your request
 ================================================================================
 ```
 
+---
+
+## 🎓 Module 7.9: Enterprise Output Normalization, System-Wide Error Handling & Incident Review
+
+### 7.9.1 Concept Primer & Step-by-Step Breakdown
+- **The Core Problem:**
+  1. **Raw Model Envelope Leakage:** Modern multimodal and function-calling LLMs (such as Gemini 3.6 Flash in `langchain-google-genai`) return text as chunked content part dictionaries: `[{'type': 'text', 'text': '...'}, {'extras': {'signature': '...'}}]`. Inadvertently passing this object to `str()` leaks raw Python syntax, unparsed JSON, and large base64 cryptographic signatures directly into the user interface.
+  2. **Ugly Crashes & Lost Clinical Input:** When database timeouts, API rate limits, or RBAC denials occur, standard web frameworks either throw a generic 500 error or crash silently, causing busy clinicians to lose long, meticulously typed clinical instructions.
+- **The Solution:**
+  1. **Centralized Text Extractor (`src/utils/text_extractor.py`):** Unpacks list parts, decodes stringified lists, strips signature blocks, and concatenates text chunks without breaking Markdown tables or headers.
+  2. **System-Wide Incident Logging (`audit_tracker.log_event`):** Assigns a unique incident ID (`INC-<timestamp>-<hash>`) to every exception across the agent loop and FastAPI middleware, archiving the full payload into `reports/sessions/` for clinical governance review.
+  3. **Empathetic UI Error Cards & 1-Click Prompt Draft Restore:** Replaces alarming error traces with clear clinical guidance and a single-click button that instantly re-populates the input box with the preserved draft.
+  4. **Incident Review Endpoint (`GET /api/audit/incidents`):** Provides compliance officers and administrators with a dedicated audit trail endpoint.
+
+---
+
+### 7.9.2 How to Run the Verification Demo & Tests
+
+#### 🪟 Windows Terminal:
+```powershell
+# Run the dedicated error interception & text normalization test suite:
+.venv\Scripts\python.exe -m pytest tests/test_text_extractor_and_error_handling.py
+
+# Run the complete platform regression suite (all 66 tests):
+.venv\Scripts\python.exe -m pytest
+```
+
+#### 🐧 Linux / 🍎 macOS Terminal:
+```bash
+# Run the dedicated error interception & text normalization test suite:
+.venv/bin/python3 -m pytest tests/test_text_extractor_and_error_handling.py
+
+# Run the complete platform regression suite (all 66 tests):
+.venv/bin/python3 -m pytest
+```
+
+---
+
+### 7.9.3 Exact Terminal Verification Output
+
+```text
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.1.1, pluggy-1.6.0
+rootdir: D:\aiagent
+collected 66 items
+
+tests\test_audit_and_quota.py .........                                  [ 13%]
+tests\test_dual_llm_router.py .....                                      [ 21%]
+tests\test_fhir_normalization.py .                                       [ 22%]
+tests\test_hitl_approval.py ........                                     [ 34%]
+tests\test_input_guardrails.py .........                                 [ 48%]
+tests\test_mcp_server.py .....                                           [ 56%]
+tests\test_multi_agent.py .....                                          [ 63%]
+tests\test_production_hardening.py ......                                [ 72%]
+tests\test_single_agent.py ............                                  [ 90%]
+tests\test_text_extractor_and_error_handling.py ......                   [100%]
+
+======================= 66 passed, 4 warnings in 26.54s =======================
+```
+

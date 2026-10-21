@@ -10,6 +10,7 @@ src/releases
 *.tmp
 *.temp
 .cache/
+venv/
 __pycache__/
 .adk/
 reports/

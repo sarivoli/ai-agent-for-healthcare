@@ -118,24 +118,20 @@ class CloudLLMProvider:
         """Invokes Cloud Gemini LLM with de-identified clinical payload."""
         if self.google_api_key and os.getenv("LLM_PROVIDER", "").lower() != "mock":
             try:
+                import warnings
+                warnings.filterwarnings("ignore", category=UserWarning, module="langchain_google_genai")
+                import logging
+                logging.getLogger("google.genai").setLevel(logging.ERROR)
+                logging.getLogger("google_genai").setLevel(logging.ERROR)
+
                 from langchain_google_genai import ChatGoogleGenerativeAI
+                from src.utils.text_extractor import extract_message_text
                 llm = ChatGoogleGenerativeAI(
                     model=self.model_name,
-                    temperature=0.1,
                     google_api_key=self.google_api_key
                 )
                 res = llm.invoke([HumanMessage(content=deidentified_prompt)])
-                content_text = res.content
-                if isinstance(content_text, list):
-                    parts = []
-                    for p in content_text:
-                        if isinstance(p, dict) and "text" in p:
-                            parts.append(p["text"])
-                        elif isinstance(p, str):
-                            parts.append(p)
-                    content_text = "\n".join(parts)
-                elif not isinstance(content_text, str):
-                    content_text = str(content_text)
+                content_text = extract_message_text(res.content)
 
                 return {
                     "status": "success",

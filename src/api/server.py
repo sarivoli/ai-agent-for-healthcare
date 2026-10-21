@@ -3,11 +3,16 @@ FastAPI Streaming Server & REST API for Healthcare Multi-Agent Platform.
 Provides endpoints for prompt execution, RBAC authorization, HITL ticket management, and session state retrieval.
 """
 
+import os
+import json
+import time
+import uuid
+import traceback
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Header, Query
+from fastapi import FastAPI, HTTPException, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -23,6 +28,8 @@ from src.agents.fault_tolerance import fault_tolerant_agent_execute, draft_store
 from src.agents.hitl_agent import hitl_agent_app, resume_hitl_agent_pipeline
 from src.agents.multi_agent import multi_agent_app
 from src.db.mock_healthcare_db import db
+from src.security.audit_tracker import audit_tracker
+from src.utils.text_extractor import extract_message_text
 
 
 app = FastAPI(
@@ -44,6 +51,35 @@ app.add_middleware(
 UI_DIR = Path(__file__).parent.parent / "ui"
 if UI_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(UI_DIR)), name="static")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler capturing unexpected server/agent errors into audit log."""
+    incident_id = f"INC-{int(time.time())}-{uuid.uuid4().hex[:4].upper()}"
+    err_stack = traceback.format_exc()
+    audit_tracker.log_event("SYSTEM_API_EXCEPTION", {
+        "incident_id": incident_id,
+        "url": str(request.url),
+        "method": request.method,
+        "error": str(exc),
+        "error_type": type(exc).__name__,
+        "traceback": err_stack[:500]
+    })
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "system_error",
+            "incident_id": incident_id,
+            "error_type": type(exc).__name__,
+            "error_message": f"Healthcare Platform Service Notice: {str(exc)}",
+            "user_message": (
+                "An unexpected condition occurred while processing your request. "
+                f"The clinical system has recorded this incident under ticket Reference '{incident_id}' for audit review."
+            ),
+            "recommendation": "Your request has been safely captured in system logs. You may retry or contact clinical system administration."
+        }
+    )
 
 
 class ChatRequest(BaseModel):
@@ -88,7 +124,19 @@ def process_chat_request(
     try:
         enforce_action_permission("get_patient_demographics", user_role)
     except RBACPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        incident_id = f"INC-{int(time.time())}-{uuid.uuid4().hex[:4].upper()}"
+        audit_tracker.log_event("RBAC_PERMISSION_DENIED", {
+            "incident_id": incident_id,
+            "role": user_role,
+            "action": "get_patient_demographics",
+            "thread_id": thread_id,
+            "prompt": req.prompt,
+            "error": str(exc)
+        })
+        raise HTTPException(
+            status_code=403,
+            detail=f"{str(exc)} Switch your Active Role in the top header to 'Clinician' to proceed."
+        )
 
     def _execute():
         if req.use_hitl:
@@ -118,6 +166,10 @@ def process_chat_request(
                     "params": first_act
                 }
             
+            # Sanitize final summary text to guarantee clean Markdown string
+            if res.get("final_summary"):
+                res["final_summary"] = extract_message_text(res["final_summary"])
+
             # Apply field-level RBAC filtering on final output
             return apply_field_level_rbac(res, user_role)
         else:
@@ -128,6 +180,8 @@ def process_chat_request(
                 "next_node": "IngestionAgent"
             }
             res = multi_agent_app.invoke(initial_state)
+            if res.get("final_summary"):
+                res["final_summary"] = extract_message_text(res["final_summary"])
             return apply_field_level_rbac(res, user_role)
 
     # Wrap execution in fault tolerance engine
@@ -224,4 +278,25 @@ def reject_ticket(
         "message": f"Ticket {req.ticket_id} rejected by clinician. Action cancelled.",
         "ticket": ticket_manager.get_ticket_by_id(req.ticket_id).model_dump(),
         "final_state": final_state
+    }
+
+
+@app.get("/api/audit/incidents")
+def list_audit_incidents(limit: int = 50):
+    """
+    Retrieve logged system, RBAC, and agent incidents for administrative and clinical governance review.
+    """
+    reports_dir = audit_tracker.reports_dir
+    incidents = []
+    if reports_dir.exists():
+        event_files = sorted(reports_dir.glob("EVENT-*.json"), key=os.path.getmtime, reverse=True)
+        for p in event_files[:limit]:
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    incidents.append(json.load(f))
+            except Exception:
+                pass
+    return {
+        "total_incidents": len(incidents),
+        "incidents": incidents
     }

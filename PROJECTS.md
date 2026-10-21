@@ -48,3 +48,4 @@ All completed features generate dedicated feature specifications in [docs/featur
 - [04_dual_llm_phi_router.md](file:///d:/aiagent/docs/features/04_dual_llm_phi_router.md) *(Pending Module 5)*
 - [05_clinical_rules_and_hitl.md](file:///d:/aiagent/docs/features/05_clinical_rules_and_hitl.md) *(Pending Module 6)*
 - [06_production_hardening_and_ui.md](file:///d:/aiagent/docs/features/06_production_hardening_and_ui.md) *(Pending Module 7)*
+- [07_system_error_handling_and_output_normalization.md](file:///d:/aiagent/docs/features/07_system_error_handling_and_output_normalization.md) *(Completed)*

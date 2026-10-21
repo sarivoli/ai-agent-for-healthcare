@@ -39,6 +39,7 @@ from src.security.input_guardrails import input_guardrail_engine
 from src.security.quota_manager import quota_manager, QuotaState, QuotaContext
 from src.security.audit_tracker import audit_tracker
 from src.db.mock_healthcare_db import db
+from src.utils.text_extractor import extract_message_text
 
 load_dotenv()
 
@@ -236,10 +237,15 @@ def get_configured_multi_agent_llm(persona: str = "physician", force_mock: bool 
 
     if google_api_key and provider != "mock":
         try:
+            import warnings
+            warnings.filterwarnings("ignore", category=UserWarning, module="langchain_google_genai")
+            import logging
+            logging.getLogger("google.genai").setLevel(logging.ERROR)
+            logging.getLogger("google_genai").setLevel(logging.ERROR)
+
             from langchain_google_genai import ChatGoogleGenerativeAI
             return ChatGoogleGenerativeAI(
                 model="gemini-3.6-flash",
-                temperature=0.1,
                 google_api_key=google_api_key
             )
         except Exception:
@@ -265,7 +271,7 @@ def build_multi_agent_graph(llm: Optional[BaseChatModel] = None):
         prompt_text = ""
         for m in state.get("messages", []):
             if isinstance(m, HumanMessage):
-                prompt_text = str(m.content)
+                prompt_text = extract_message_text(m.content)
 
         scan_result = input_guardrail_engine.scan(prompt_text)
         if not scan_result.is_allowed:
@@ -553,6 +559,8 @@ def run_multi_agent_pipeline(
     }
 
     result = graph.invoke(initial_state)
+    if result.get("final_summary"):
+        result["final_summary"] = extract_message_text(result["final_summary"])
     total_latency = time.perf_counter() - start_time
     if result.get("telemetry_audit"):
         result["telemetry_audit"]["performance_telemetry"]["latency_seconds"] = round(total_latency, 3)

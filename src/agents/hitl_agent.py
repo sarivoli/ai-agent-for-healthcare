@@ -18,11 +18,18 @@ from langchain_core.outputs import ChatResult, ChatGeneration
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="langchain_google_genai")
+import logging
+logging.getLogger("google.genai").setLevel(logging.ERROR)
+logging.getLogger("google_genai").setLevel(logging.ERROR)
+
 from src.rules.rule_engine import clinical_rule_engine, ClinicalRuleEvaluationResult
 from src.db.mock_healthcare_db import db
 from src.security.input_guardrails import input_guardrail_engine
 from src.security.quota_manager import quota_manager, QuotaState, QuotaContext
 from src.security.audit_tracker import audit_tracker
+from src.utils.text_extractor import extract_message_text
 
 load_dotenv()
 
@@ -94,13 +101,168 @@ def get_configured_hitl_llm(persona: str = "physician", force_mock: bool = False
             from langchain_google_genai import ChatGoogleGenerativeAI
             return ChatGoogleGenerativeAI(
                 model="gemini-3.6-flash",
-                temperature=0.1,
                 google_api_key=google_api_key
             )
         except Exception:
             return DeterministicHITLChatModel(persona=persona)
 
     return DeterministicHITLChatModel(persona=persona)
+
+
+def _fallback_intent_synthesis(
+    prompt_text: str,
+    role: str,
+    patient_name: str,
+    patient_id: str,
+    mrn: str,
+    raw_fhir_data: Optional[Dict[str, Any]] = None,
+    rule_evaluation: Optional[Dict[str, Any]] = None
+) -> str:
+    """
+    Offline synthesis engine used when live LLM is unavailable or operating in mock/offline mode.
+    Evaluates clinical prompt intent and formats structured, publication-grade Markdown outputs.
+    """
+    raw_fhir_data = raw_fhir_data or {}
+    text_lower = (prompt_text or "").lower().strip()
+
+    # Extract FHIR Patient Data
+    labs = raw_fhir_data.get("labs", [])
+    meds = raw_fhir_data.get("medications", [])
+    notes = raw_fhir_data.get("notes", [])
+
+    # Care Gaps & Metrics from Rule Engine
+    rule_eval = rule_evaluation or {}
+    care_gaps = rule_eval.get("care_gaps", [])
+    quality_metrics = rule_eval.get("quality_metrics", [])
+
+    # Intent Detection
+    is_care_gap_intent = any(k in text_lower for k in [
+        "care gap", "hedis", "compliance", "quality", "remediate", "remediation", "audit", "gap"
+    ])
+    is_summary_or_lab_intent = any(k in text_lower for k in [
+        "summary", "patient summary", "lab", "labs", "result", "results", "check", "get patient", "vitals", "hba1c", "blood pressure"
+    ])
+    is_note_intent = any(k in text_lower for k in [
+        "note", "progress note", "clinical note", "diet"
+    ])
+
+    if is_care_gap_intent:
+        synthesis = (
+            f"# 📊 HEDIS QUALITY & CLINICAL CARE GAP COMPLIANCE REPORT\n"
+            f"**Patient:** {patient_name} | **MRN:** `{mrn}` | **Patient ID:** `{patient_id}`\n"
+            f"**Evaluation Scope:** HEDIS CDC (Diabetes) & CBP (Hypertension) Quality Standards\n\n"
+            f"---\n\n"
+            f"### 🏆 HEDIS Quality Performance Metrics\n"
+            f"| Metric ID | Quality Measure Title | Current Value | Target Threshold | Compliance Status | Confidence |\n"
+            f"| :--- | :--- | :--- | :--- | :--- | :--- |\n"
+        )
+        if quality_metrics:
+            for q in quality_metrics:
+                m_title = q.get("title") or q.get("metric_id", "HEDIS Metric")
+                m_val = q.get("current_value", "N/A")
+                m_target = q.get("target_threshold", "N/A")
+                m_status = q.get("status", "SUBOPTIMAL")
+                m_conf = int((q.get("confidence_score", 0.90)) * 100)
+                status_badge = "🟢 **PASS**" if "PASS" in m_status else f"🟡 **{m_status}**"
+                synthesis += f"| `{q.get('metric_id', 'HEDIS')}` | {m_title} | **{m_val}** | {m_target} | {status_badge} | {m_conf}% |\n"
+        else:
+            synthesis += (
+                f"| `HEDIS_CDC_A1C` | HEDIS CDC (HbA1c Control) | **8.4 %** | < 8.0 % | 🟡 **SUBOPTIMAL** | 95% |\n"
+                f"| `HEDIS_CBP_BP` | HEDIS CBP (Blood Pressure Control) | **142.0 mmHg** | < 140 mmHg | 🟡 **SUBOPTIMAL** | 92% |\n"
+            )
+
+        synthesis += f"\n### 🚨 Identified Clinical Care Gaps\n"
+        synthesis += f"| Gap ID | Title & Condition | Severity | Evidence Base | Recommended Clinical Action |\n"
+        synthesis += f"| :--- | :--- | :--- | :--- | :--- |\n"
+
+        if care_gaps:
+            for g in care_gaps:
+                g_id = g.get("gap_id", "GAP")
+                g_title = g.get("title", "Care Gap")
+                g_sev = g.get("severity", "MEDIUM")
+                g_ev = ", ".join(g.get("evidence_sources", [])) or "LOINC Diagnostic Record"
+                g_rec = g.get("recommendation", "Clinical follow-up required.")
+                synthesis += f"| `{g_id}` | **{g_title}** | `{g_sev}` | {g_ev} | {g_rec} |\n"
+        else:
+            synthesis += (
+                f"| `GAP-CDC-002` | **Suboptimal Glycemic Control** | `MEDIUM` | LOINC 4548-4 (HbA1c: 8.4%) | Adjust diabetes therapy; reinforce lifestyle & adherence |\n"
+                f"| `GAP-CBP-001` | **Stage 1 Systolic Hypertension** | `MEDIUM` | LOINC 8480-6 (BP: 142.0 mmHg) | Initiate daily home BP log & evaluate dose adjustment |\n"
+                f"| `GAP-EYE-001` | **Diabetic Retinal Eye Exam Overdue** | `MEDIUM` | EHR Screening Registry | Schedule annual dilated retinal eye examination |\n"
+                f"| `GAP-UACR-001` | **Urine uACR Screening Overdue** | `LOW` | EHR Nephropathy Registry | Order spot urine uACR screening |\n"
+            )
+
+        synthesis += (
+            f"\n---\n"
+            f"*Note: All recommended care gap remediations require explicit clinician attestation prior to EHR database execution.*"
+        )
+        return synthesis
+
+    elif is_summary_or_lab_intent or is_note_intent:
+        synthesis = (
+            f"# 📋 CLINICAL PATIENT SUMMARY & LABORATORY REPORT\n"
+            f"**Patient Name:** {patient_name} | **MRN:** `{mrn}` | **Patient ID:** `{patient_id}`\n"
+            f"**Demographics:** 54F (DOB: 1965-04-12) | **User Role:** `{role}`\n\n"
+            f"---\n\n"
+            f"### 🩺 Active Clinical Diagnoses\n"
+            f"- **Type 2 Diabetes Mellitus** (ICD-10: E11.9)\n"
+            f"- **Essential Hypertension** (ICD-10: I10)\n\n"
+            f"### 🧪 Recent Laboratory & Diagnostic Results\n"
+            f"| Diagnostic Test | LOINC Code | Result Value | Date Recorded | Reference Target | HEDIS Status |\n"
+            f"| :--- | :--- | :--- | :--- | :--- | :--- |\n"
+        )
+
+        if labs:
+            for l in labs:
+                t_name = l.get("name") or l.get("test_name") or "Lab Observation"
+                loinc = l.get("loinc") or ("4548-4" if "hba1c" in t_name.lower() else "8480-6")
+                val = l.get("result_value") or l.get("result_val") or "N/A"
+                unit = l.get("unit") or ("%" if "hba1c" in t_name.lower() else "mmHg")
+                date_str = l.get("date") or "2026-08-15"
+                target = "< 8.0 %" if "hba1c" in t_name.lower() else "< 140 mmHg"
+                status_str = "🟡 Suboptimal Control" if ("hba1c" in t_name.lower() or "systolic" in t_name.lower()) else "🟢 Normal"
+                synthesis += f"| **{t_name}** | {loinc} | **{val} {unit}** | {date_str} | {target} | {status_str} |\n"
+        else:
+            synthesis += (
+                f"| **Hemoglobin A1c** | 4548-4 | **8.4 %** | 2026-08-15 | < 7.0 % | 🟡 Suboptimal Control (HEDIS CDC) |\n"
+                f"| **Systolic Blood Pressure** | 8480-6 | **142.0 mmHg** | 2026-08-15 | < 140 mmHg | 🟡 Stage 1 Hypertension (HEDIS CBP) |\n"
+            )
+
+        synthesis += f"\n### 💊 Active Prescriptions & Medication Profile\n"
+        if meds:
+            for m in meds:
+                d_name = m.get("drug_name") or "Medication"
+                freq = m.get("frequency") or "daily"
+                synthesis += f"- **{d_name}:** Take {freq}\n"
+        else:
+            synthesis += (
+                f"- **Metformin 1000mg:** Oral daily with largest meal *(Note: Patient reports occasional GI upset with evening dose)*\n"
+                f"- **Lisinopril 10mg:** Oral daily\n"
+            )
+
+        synthesis += f"\n### 📝 Documented Progress Notes\n"
+        if notes:
+            for n in notes:
+                author = n.get("author", "Clinician")
+                dt = n.get("date", "2026-08-15")
+                cat = n.get("category", "Progress Note")
+                cnt = n.get("content", "")
+                synthesis += f"- **[{dt} - {cat}]** ({author}): *\"{cnt}\"*\n"
+        else:
+            synthesis += f"- **[2026-08-15 - Progress Note]** (Dr. Sarah Jenkins, MD): *\"Patient presents for diabetes follow-up. HbA1c 8.4%. Blood pressure 142/90. Instructed on diet compliance, Metformin dosing, and renewed Lisinopril 10mg.\"*\n"
+
+        return synthesis
+
+    else:
+        return (
+            f"### 🤖 Enterprise Healthcare Clinical AI Assistant\n\n"
+            f"Hello! I'm active and ready to assist you with patient **{patient_name}** (MRN: `{mrn}`, ID: `{patient_id}`).\n\n"
+            f"**Available Clinical Actions & Queries:**\n"
+            f"- 📋 **Patient Summary & Labs:** Ask *'Get patient summary for P101 and check recent lab results'*.\n"
+            f"- 📊 **HEDIS Quality & Care Gaps:** Ask *'Analyze patient P101 for care gaps and HEDIS quality compliance'*.\n"
+            f"- 📝 **Clinical Progress Note Updates:** Ask *'Update clinical progress note for patient P101 noting diet compliance'*.\n"
+            f"- 💊 **Medication Order Staging:** Ask *'Order Metformin 500mg daily for P101'* (Triggers HITL clinician attestation gate).\n\n"
+            f"How can I assist you with {patient_name} today?"
+        )
 
 
 # ==============================================================================
@@ -124,7 +286,7 @@ def build_hitl_agent_graph(llm: Optional[BaseChatModel] = None):
         prompt_text = ""
         for m in state.get("messages", []):
             if isinstance(m, HumanMessage):
-                prompt_text = str(m.content)
+                prompt_text = extract_message_text(m.content)
 
         scan_result = input_guardrail_engine.scan(prompt_text)
         if not scan_result.is_allowed:
@@ -184,36 +346,74 @@ def build_hitl_agent_graph(llm: Optional[BaseChatModel] = None):
         pending_actions: List[Dict[str, Any]] = []
         patient_id = state.get("patient_id", "P101")
 
+        prompt_text = ""
         for msg in state.get("messages", []):
             if isinstance(msg, HumanMessage):
-                text = str(msg.content)
-                # Detect prompt-driven medication order (CRUD Create)
-                match_med = re.search(r"(order|prescribe|add)\s+([A-Za-z0-9\s]+?)\s+(\d+mg)", text, re.IGNORECASE)
-                if match_med:
-                    drug = match_med.group(2).strip()
-                    dose = match_med.group(3).strip()
-                    pending_actions.append({
-                        "action_type": "CREATE_MEDICATION_ORDER",
-                        "patient_id": patient_id,
-                        "drug_name": drug,
-                        "dosage": dose,
-                        "frequency": "daily",
-                        "confidence_score": 0.95,
-                        "reason": f"Prompt-driven order request: '{drug} {dose}'"
-                    })
+                prompt_text += " " + extract_message_text(msg.content)
 
-        # Add care gaps requiring approval
-        for gap in rule_res.care_gaps:
-            if gap.requires_hitl_approval:
-                pending_actions.append({
-                    "action_type": "REMEDIATE_CARE_GAP",
-                    "patient_id": patient_id,
-                    "gap_id": gap.gap_id,
-                    "title": gap.title,
-                    "severity": gap.severity,
-                    "confidence_score": gap.confidence_score,
-                    "recommendation": gap.recommendation
-                })
+        text_lower = prompt_text.lower().strip()
+
+        # Detect prompt-driven medication order (CRUD Create)
+        match_med = re.search(r"(order|prescribe|add)\s+([A-Za-z0-9\s]+?)\s+(\d+mg)", prompt_text, re.IGNORECASE)
+        if match_med:
+            drug = match_med.group(2).strip()
+            dose = match_med.group(3).strip()
+            pending_actions.append({
+                "action_type": "CREATE_MEDICATION_ORDER",
+                "patient_id": patient_id,
+                "drug_name": drug,
+                "dosage": dose,
+                "frequency": "daily",
+                "confidence_score": 0.95,
+                "reason": f"Order new medication: {drug} {dose} daily for patient {patient_id}"
+            })
+
+        # Detect prompt-driven clinical note update (CRUD Update)
+        match_note = re.search(
+            r"(?:update|add|write|append|create)\s+(?:the\s+)?(?:clinical\s+|progress\s+|patient\s+)*note\b\s*(?:for\s+(?:patient\s+)?([A-Za-z0-9_-]+))?\s*(?:noting|stating|that|with|:|-)?\s*(.*)",
+            prompt_text,
+            re.IGNORECASE
+        )
+        if match_note:
+            target_pid = (match_note.group(1) or patient_id).strip().upper()
+            raw_note = (match_note.group(2) or "").strip()
+
+            if raw_note:
+                if "diet" in raw_note.lower() and "complian" in raw_note.lower():
+                    note_content = "Patient is compliant with recommended low-glycemic dietary regimen."
+                elif not raw_note.lower().startswith("patient"):
+                    note_content = f"Patient progress note: {raw_note}"
+                else:
+                    note_content = raw_note
+            else:
+                note_content = "Patient progress note updated."
+
+            pending_actions.append({
+                "action_type": "UPDATE_PATIENT_NOTE",
+                "patient_id": target_pid,
+                "note_content": note_content,
+                "confidence_score": 0.95,
+                "reason": f"Update clinical progress note for patient {target_pid}: '{note_content}'"
+            })
+
+        # Trigger care gap remediations only when prompt explicitly requests action execution/remediation
+        is_remediation_action = any(k in text_lower for k in [
+            "remediate", "remediation", "fix gap", "close gap", "resolve gap", "apply remediation"
+        ])
+
+        if is_remediation_action and not pending_actions:
+            for gap in rule_res.care_gaps:
+                if gap.requires_hitl_approval:
+                    pending_actions.append({
+                        "action_type": "REMEDIATE_CARE_GAP",
+                        "patient_id": patient_id,
+                        "gap_id": gap.gap_id,
+                        "title": gap.title,
+                        "severity": gap.severity,
+                        "confidence_score": gap.confidence_score,
+                        "recommendation": gap.recommendation,
+                        "reason": f"Remediate HEDIS care gap '{gap.title}' ({gap.gap_id}): {gap.recommendation}"
+                    })
 
         return {
             "rule_evaluation": rule_res.model_dump(),
@@ -305,9 +505,21 @@ def build_hitl_agent_graph(llm: Optional[BaseChatModel] = None):
         status = state.get("attestation_status")
         results = state.get("execution_results", [])
         decision = state.get("clinician_decision") or {}
+        raw_fhir_data = state.get("raw_fhir_data", {})
 
         patient_name = "Eleanor Vance"
         mrn = "MRN-884920"
+        bundle = raw_fhir_data.get("patient_demographics", {})
+        if bundle:
+            for entry in bundle.get("entry", []):
+                res = entry.get("resource", {})
+                if res.get("resourceType") == "Patient":
+                    names = res.get("name", [{}])
+                    if names and names[0].get("family"):
+                        patient_name = f"{names[0].get('given', [''])[0]} {names[0].get('family', '')}".strip()
+                    idents = res.get("identifier", [{}])
+                    if idents:
+                        mrn = idents[0].get("value", mrn)
 
         if status == "APPROVED":
             synthesis = (
@@ -316,9 +528,22 @@ def build_hitl_agent_graph(llm: Optional[BaseChatModel] = None):
                 f"### Attestation Status: `APPROVED`\n"
                 f"- **Clinician Comments:** \"{decision.get('comments', 'Attested and verified clinical orders.')}\"\n\n"
                 f"### Executed Database CRUD Actions:\n"
+                f"| Execution Status | Action Category | Reference ID | Summary of Action Executed |\n"
+                f"| :--- | :--- | :--- | :--- |\n"
             )
             for res in results:
-                synthesis += f"- **[EXECUTED]** {json.dumps(res)}\n"
+                st = res.get("status", "success").upper()
+                if "remediation" in res:
+                    rem = res.get("remediation", {})
+                    synthesis += f"| ✅ **{st}** | Care Gap Remediation | `{rem.get('remediation_id')}` | {rem.get('action_taken')} |\n"
+                elif "medication" in res:
+                    med = res.get("medication", {})
+                    synthesis += f"| ✅ **{st}** | Medication Order | `{res.get('order_id')}` | Order {med.get('drug_name')} ({med.get('frequency', 'daily')}) |\n"
+                elif "note" in res:
+                    note = res.get("note", {})
+                    synthesis += f"| ✅ **{st}** | Progress Note Update | `{res.get('note_id')}` | Added note: \"{note.get('content')}\" |\n"
+                else:
+                    synthesis += f"| ✅ **{st}** | Clinical Write Action | N/A | {res.get('message', 'Action executed.')} |\n"
 
             synthesis += (
                 f"\n## Updated SOAP Plan:\n"
@@ -335,14 +560,89 @@ def build_hitl_agent_graph(llm: Optional[BaseChatModel] = None):
             )
 
         else:
-            synthesis = (
-                f"# CLINICAL SUMMARY (SOAP BRIEF)\n"
-                f"**Patient:** {patient_name} | **MRN:** {mrn}\n\n"
-                f"## S - Subjective\n- Patient presented for chronic disease follow-up.\n\n"
-                f"## O - Objective\n- HbA1c: 8.4% | Blood Pressure: 142/90 mmHg.\n\n"
-                f"## A - Assessment\n- Suboptimal glycemic and blood pressure control.\n\n"
-                f"## P - Plan\n- Routine chronic care management."
-            )
+            prompt_text = ""
+            for msg in state.get("messages", []):
+                if isinstance(msg, HumanMessage):
+                    prompt_text += " " + extract_message_text(msg.content)
+
+            prompt_text = prompt_text.strip()
+            role = state.get("role", "clinician")
+            rule_eval = state.get("rule_evaluation", {})
+
+            if llm and not isinstance(llm, DeterministicHITLChatModel):
+                try:
+                    fhir_snapshot = json.dumps(raw_fhir_data, indent=2)[:1500]
+                    sys_instruction = (
+                        "You are the **Enterprise Healthcare Multi-Agent Clinical AI Assistant** — a specialized AI built exclusively "
+                        "for clinical EHR workflows, HEDIS quality metrics, and human-governed medical decision support.\n\n"
+
+                        f"## Current Session Context\n"
+                        f"- **Active User Role:** `{role}`\n"
+                        f"- **Active Patient:** {patient_name} (Patient ID: `{patient_id}`, MRN: `{mrn}`)\n"
+                        f"- **Patient FHIR Data:**\n```json\n{fhir_snapshot}\n```\n\n"
+
+                        "## Your Identity & Capabilities\n"
+                        "When the user asks who you are, what your role is, what you can help with, what your business logic is, "
+                        "or any capability/identity question, answer naturally and concisely:\n"
+                        "- You are a Healthcare Multi-Agent AI Assistant.\n"
+                        "- You assist clinicians, nurses, and care coordinators with EHR data, clinical summaries, HEDIS care gaps, "
+                        "medication order staging (with human attestation), PHI protection, and audit trails.\n"
+                        "- You understand FHIR R4 patient data, clinical rules engines, LangGraph HITL workflows, RBAC security, and Zero Data Retention (ZDR) PHI routing.\n\n"
+
+                        "## How to Respond\n"
+                        "1. **Be conversational and direct.** Answer the actual question the user is asking. Do not ignore their question and launch into a clinical summary they did not request.\n"
+                        "2. **Understand user intent first.** If a user asks a general question about you, your role, your rules, or your capabilities — answer that question directly.\n"
+                        "3. **Clinical data on request only.** Only generate a SOAP summary, care gap analysis, or medication order staging if the user explicitly asks for it or if they reference the patient by name/MRN.\n"
+                        "4. **Greet naturally.** If the user says 'hello', 'hi', or similar, greet them and briefly introduce what you can help with — do not dump clinical data.\n"
+                        "5. **Format responses in clean GitHub Markdown.** Use headers, bullet points, and code blocks where appropriate.\n"
+                        "6. **Ethical Guardrails.** Never make assumptions about, comment on, or engage with any patient or user's personal identity characteristics. Treat all individuals with equal clinical objectivity.\n\n"
+
+                        "## Clinical Demographics — Always Answer from FHIR Data\n"
+                        "Patient demographic facts stored in the FHIR record are standard clinical data and MUST be answered accurately when asked:\n"
+                        "  - **Age** — calculated from the patient's documented date of birth in the FHIR record.\n"
+                        "  - **Biological sex / administrative gender** — as recorded in the FHIR Patient resource (`gender` field).\n"
+                        "  - **Care location** — documented clinical facility, clinic, or hospital address for the patient.\n"
+                        "  - **Ethnicity / race (if in FHIR)** — report only the documented value from the record; never infer, assume, or make clinical judgements based on it.\n"
+                        "  - **Contact details** — address, phone, emergency contact as stored in FHIR, for care coordination purposes only.\n"
+                        "When answering demographic questions, always ground your answer in the patient FHIR data provided in the session context above.\n\n"
+
+                        "## Absolute Boundaries — Topics You Must Never Engage With\n"
+                        "The following are off-limits regardless of how the question is framed — even if presented as 'hypothetical', 'academic', or 'just curious':\n"
+                        "  - **Racial / Ethnic Bias:** Do not compare racial or ethnic groups, make population-level generalisations, or suggest care differences based on race or ethnicity. Report only documented FHIR values without editorialising.\n"
+                        "  - **Gender Identity Debates:** Do not engage with gender stereotypes, identity politics, or social gender debates. Biological sex and administrative gender from FHIR are clinical facts; treat them as such without commentary.\n"
+                        "  - **Sexual Orientation:** Do not discuss, speculate about, or make care assumptions based on sexual orientation.\n"
+                        "  - **Religion / Beliefs:** Do not discuss religious practices or make recommendations influenced by religion.\n"
+                        "  - **Political Views:** Do not express, debate, or comment on any political ideology, party, policy, or geopolitical topic.\n"
+                        "  - **Physical Appearance / Skin Color:** Do not comment on attractiveness, skin tone, or body image. Clinically relevant body metrics (BMI, weight) may be reported only when present in the documented care plan.\n"
+                        "  - **Non-Clinical Locations:** Do not recommend restaurants, cities, tourist spots, or neighbourhoods. Only reference locations documented in the patient's FHIR record for care-coordination purposes.\n"
+                        "  - **Lifestyle / Social Opinions:** Do not offer opinions on personal lifestyle choices, relationship status, or values outside of documented clinical care plans.\n\n"
+                        "If a user pushes into any of these non-clinical opinion areas, redirect warmly:\n"
+                        "  'That's more of a social topic than a clinical one — and my focus is on delivering unbiased, evidence-based care. "
+                        f"Is there a clinical question I can help you with for {patient_name} today?'\n\n"
+
+                        "## Where You Shine\n"
+                        "Your expertise covers everything within the healthcare and clinical domain:\n"
+                        "  - Healthcare, medicine, clinical EHR data, FHIR, HEDIS, chronic disease management\n"
+                        "  - This platform's business logic: HITL attestation, RBAC roles, PHI routing, audit trails, clinical rules\n"
+                        f"  - Patient {patient_name}'s health records, conditions, medications, and care plans\n\n"
+                        "If the user asks about something outside this scope (e.g. entertainment, shopping, sports, food, personal errands), "
+                        "respond warmly by acknowledging their message, then redirect positively to what you can offer. Example:\n"
+                        "  'That's a bit outside my wheelhouse! My expertise is all things clinical — from patient summaries and HEDIS metrics "
+                        f"to medication orders and EHR workflows. Is there something I can help you with for {patient_name} or this platform today?'"
+                    )
+                    ai_response = llm.invoke([
+                        SystemMessage(content=sys_instruction),
+                        HumanMessage(content=prompt_text)
+                    ])
+                    synthesis = extract_message_text(ai_response.content)
+                except Exception as llm_err:
+                    import logging
+                    logging.getLogger(__name__).warning(f"LLM invocation failed in synthesize_summary_node: {llm_err}")
+                    synthesis = _fallback_intent_synthesis(prompt_text, role, patient_name, patient_id, mrn, raw_fhir_data, rule_eval)
+            else:
+                synthesis = _fallback_intent_synthesis(prompt_text, role, patient_name, patient_id, mrn, raw_fhir_data, rule_eval)
+
+        synthesis = extract_message_text(synthesis)
 
         # Telemetry & Audit
         session_id = state.get("session_id", "default")
@@ -438,7 +738,10 @@ def run_hitl_agent_pipeline(
         "telemetry_audit": None
     }
 
-    return graph.invoke(initial_state)
+    result = graph.invoke(initial_state)
+    if result.get("final_summary"):
+        result["final_summary"] = extract_message_text(result["final_summary"])
+    return result
 
 
 def resume_hitl_agent_pipeline(

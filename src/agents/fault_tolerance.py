@@ -36,6 +36,9 @@ class DraftStore:
 draft_store = DraftStore()
 
 
+import time
+import uuid
+
 def fault_tolerant_agent_execute(
     thread_id: str,
     prompt: str,
@@ -55,23 +58,33 @@ def fault_tolerant_agent_execute(
         return result
     except Exception as exc:
         err_stack = traceback.format_exc()
+        incident_id = f"INC-{int(time.time())}-{uuid.uuid4().hex[:4].upper()}"
         
         # Log incident to security audit tracker
         audit_tracker.log_event(
             event_type="AGENT_EXECUTION_EXCEPTION",
             details={
+                "incident_id": incident_id,
                 "thread_id": thread_id,
+                "prompt": prompt,
                 "error": str(exc),
+                "error_type": type(exc).__name__,
                 "traceback": err_stack[:500]
             }
         )
 
         return {
             "status": "agent_error",
+            "incident_id": incident_id,
             "error_type": type(exc).__name__,
             "error_message": f"Execution error: {str(exc)}",
+            "user_message": (
+                "We encountered an unexpected issue while processing your clinical request. "
+                f"Your input prompt has been safely preserved in draft memory. Our clinical operations audit team "
+                f"has logged this incident (Reference: {incident_id}) for review."
+            ),
             "user_input_preserved": True,
             "draft_prompt": prompt,
             "thread_id": thread_id,
-            "recommendation": "Your input has been safely preserved. You may retry your request or adjust your prompt."
+            "recommendation": "Your input has been safely preserved. You may click 'Restore Draft' to review or adjust your prompt, or try again."
         }
