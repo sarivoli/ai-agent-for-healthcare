@@ -21,6 +21,7 @@ class HITLTicket(BaseModel):
     patient_id: str
     action_type: str
     action_params: Dict[str, Any] = Field(default_factory=dict)
+    pending_actions: List[Dict[str, Any]] = Field(default_factory=list)
     status: str = "AWAITING_CLINICIAN_APPROVAL"  # AWAITING_CLINICIAN_APPROVAL | APPROVED | REJECTED | EXPIRED_REJECTED
     estimated_eta: str = "15 minutes (Clinician Queue)"
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -44,16 +45,19 @@ class HITLTicketManager:
         patient_id: str,
         action_type: str,
         action_params: Dict[str, Any],
+        pending_actions: Optional[List[Dict[str, Any]]] = None,
         estimated_eta: str = "15 minutes (Clinician Queue)"
     ) -> HITLTicket:
         """Create a new pending HITL attestation ticket."""
         ticket_id = f"HITL-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+        act_list = pending_actions if pending_actions is not None else ([action_params] if action_params else [])
         ticket = HITLTicket(
             ticket_id=ticket_id,
             thread_id=thread_id,
             patient_id=patient_id,
             action_type=action_type,
             action_params=action_params,
+            pending_actions=act_list,
             status="AWAITING_CLINICIAN_APPROVAL",
             estimated_eta=estimated_eta
         )

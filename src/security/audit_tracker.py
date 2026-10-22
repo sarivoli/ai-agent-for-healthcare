@@ -7,6 +7,7 @@ and generates auditable session reports.
 import os
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
@@ -263,6 +264,171 @@ class AuditTracker:
     def list_session_audit_reports(self) -> List[str]:
         """Lists all available session IDs with stored audit reports."""
         return [p.stem for p in self.reports_dir.glob("*.json")]
+
+    # --- Transaction Journey Trace Auditing ---
+
+    def create_transaction_journey(
+        self,
+        prompt: str,
+        role: str = "Clinician",
+        patient_id: str = "P101",
+        session_id: Optional[str] = None
+    ) -> "TransactionJourney":
+        """Initializes a new tracked transaction journey for end-to-end auditing."""
+        traces_dir = self.reports_dir.parent / "transaction_traces"
+        traces_dir.mkdir(parents=True, exist_ok=True)
+        trace_id = f"TRX-{int(time.time())}-{uuid.uuid4().hex[:6].upper()}"
+        return TransactionJourney(
+            trace_id=trace_id,
+            prompt=prompt,
+            role=role,
+            patient_id=patient_id,
+            session_id=session_id or f"sess_{trace_id}",
+            traces_dir=traces_dir
+        )
+
+    def get_transaction_trace(self, trace_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a transaction journey trace by trace ID."""
+        traces_dir = self.reports_dir.parent / "transaction_traces"
+        json_path = traces_dir / f"{trace_id}.json"
+        if json_path.exists():
+            with open(json_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return None
+
+    def list_transaction_traces(self) -> List[str]:
+        """Lists all recorded transaction trace IDs sorted newest first."""
+        traces_dir = self.reports_dir.parent / "transaction_traces"
+        if not traces_dir.exists():
+            return []
+        # Sort files by modification time descending so newest transactions are first
+        files = sorted(traces_dir.glob("TRX-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return [p.stem for p in files]
+
+
+class TransactionJourney:
+    """
+    Dedicated audit tracker for an individual instruction/transaction journey.
+    Captures step-by-step lifecycle from client chat to server, Local LLM, Cloud LLM,
+    HITL attestation, and EHR database committal.
+    """
+    def __init__(
+        self,
+        trace_id: str,
+        prompt: str,
+        role: str,
+        patient_id: str,
+        session_id: str,
+        traces_dir: Path
+    ):
+        self.trace_id = trace_id
+        self.prompt = prompt
+        self.role = role
+        self.patient_id = patient_id
+        self.session_id = session_id
+        self.traces_dir = traces_dir
+        self.start_timestamp = datetime.now(timezone.utc).isoformat()
+        self.steps: List[Dict[str, Any]] = []
+        self.final_status = "IN_PROGRESS"
+
+        # Record Initial Ingress Step
+        self.record_step(
+            stage="INGRESS_CLIENT",
+            status="SUCCESS",
+            details={
+                "source": "Chat Web UI / REST Client",
+                "endpoint": "/api/chat",
+                "prompt": prompt,
+                "role": role,
+                "patient_id": patient_id,
+                "session_id": session_id
+            }
+        )
+
+    def record_step(self, stage: str, status: str, details: Dict[str, Any]):
+        """Records a single milestone along the transaction's traversal path."""
+        step_entry = {
+            "step_index": len(self.steps) + 1,
+            "stage": stage,
+            "status": status,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "details": details
+        }
+        self.steps.append(step_entry)
+
+    def finalize(
+        self,
+        final_summary: str,
+        status: str = "COMPLETED",
+        llm_telemetry: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Finalizes the journey, records egress delivery, and writes log artifacts."""
+        self.final_status = status
+        self.record_step(
+            stage="EGRESS_CLIENT",
+            status=status,
+            details={
+                "destination": "Client Web UI / REST Response",
+                "status": status,
+                "summary_preview": final_summary[:300] + "..." if len(final_summary) > 300 else final_summary
+            }
+        )
+
+        route_type = "CLOUD"
+        if llm_telemetry and "route_type" in llm_telemetry:
+            route_type = llm_telemetry["route_type"]
+        else:
+            for s in self.steps:
+                if s.get("stage") == "CLOUD_LLM_INFERENCE":
+                    route_type = "CLOUD"
+                    break
+                elif s.get("stage") == "LOCAL_LLM_INFERENCE":
+                    route_type = "LOCAL"
+                    break
+                elif s.get("stage") == "LLM_INFERENCE_AND_ROUTING":
+                    prov = (s.get("details", {}).get("provider") or "").lower()
+                    route_type = "CLOUD" if ("google" in prov or "gemini" in prov or "cloud" in prov) else "LOCAL"
+                    break
+
+        trace_payload = {
+            "trace_id": self.trace_id,
+            "session_id": self.session_id,
+            "route_type": route_type,
+            "start_timestamp": self.start_timestamp,
+            "completed_timestamp": datetime.now(timezone.utc).isoformat(),
+            "user_role": self.role,
+            "patient_id": self.patient_id,
+            "prompt": self.prompt,
+            "final_status": self.final_status,
+            "total_steps": len(self.steps),
+            "journey_steps": self.steps
+        }
+
+        if llm_telemetry:
+            trace_payload["llm_telemetry"] = llm_telemetry
+
+        # 1. Save JSON trace file
+        json_file = self.traces_dir / f"{self.trace_id}.json"
+        with open(json_file, "w", encoding="utf-8") as f:
+            json.dump(trace_payload, f, indent=2)
+
+        # 2. Append human-readable audit log
+        log_file = self.traces_dir / "audit_journey.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"\n{'=' * 80}\n")
+            f.write(f"TRANSACTION TRACE: {self.trace_id}\n")
+            f.write(f"TIMESTAMP: {self.start_timestamp} | ROLE: {self.role} | PATIENT: {self.patient_id}\n")
+            f.write(f"PROMPT: \"{self.prompt}\"\n")
+            if llm_telemetry:
+                f.write(f"LLM TELEMETRY: {json.dumps(llm_telemetry)}\n")
+            f.write(f"{'-' * 80}\n")
+            for step in self.steps:
+                f.write(f"[STEP {step['step_index']}] {step['stage']} ({step['status']}): {json.dumps(step['details'])}\n")
+            f.write(f"{'=' * 80}\n")
+
+        trace_payload["json_path"] = str(json_file)
+        trace_payload["log_path"] = str(log_file)
+        return trace_payload
 
 
 # Global singleton audit tracker

@@ -46,7 +46,7 @@ def test_dual_llm_routing_cloud_clean():
 
 def test_deidentification_reidentification_proxy():
     """Verifies forced cloud route with automated de-identification and re-identification proxy roundtrip."""
-    phi_prompt = "Patient Eleanor Vance (MRN-884920) needs HbA1c review."
+    phi_prompt = "Summarize guidelines: Patient Eleanor Vance (MRN-884920) needs HbA1c review. Please refer to patient Eleanor Vance in your reply."
     result = dual_llm_router.route_query(
         prompt=phi_prompt,
         force_route="CLOUD_DEIDENTIFIED_ROUTE",

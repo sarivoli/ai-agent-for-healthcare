@@ -53,6 +53,15 @@ def normalize_vendor_patient(vendor_record: Dict[str, Any]) -> FHIRBundle:
 
     # 2. Normalize Lab Records -> Observations
     for lab in vendor_record.get("lab_records", []):
+        raw_val = lab.get("result_val", 0.0)
+        try:
+            if isinstance(raw_val, str) and "/" in raw_val:
+                val_num = float(raw_val.split("/")[0].strip())
+            else:
+                val_num = float(raw_val)
+        except (ValueError, TypeError):
+            val_num = 0.0
+
         obs = FHIRObservation(
             id=lab.get("test_id", f"OBS-{pat_id}"),
             status="final",
@@ -68,7 +77,7 @@ def normalize_vendor_patient(vendor_record: Dict[str, Any]) -> FHIRBundle:
             ),
             subject=patient_ref,
             valueQuantity=Quantity(
-                value=float(lab.get("result_val", 0.0)),
+                value=val_num,
                 unit=lab.get("unit_meas", ""),
                 code=lab.get("unit_meas")
             ),

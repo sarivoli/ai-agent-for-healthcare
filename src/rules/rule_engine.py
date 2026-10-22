@@ -86,9 +86,12 @@ class ClinicalRuleEngine:
                     hba1c_date = t_date
                 except (ValueError, TypeError):
                     pass
-            elif "systolic" in test or "blood pressure" in test:
+            elif "systolic" in test or "blood pressure" in test or "bp" in test:
                 try:
-                    systolic_bp = float(val)
+                    if isinstance(val, str) and "/" in val:
+                        systolic_bp = float(val.split("/")[0].strip())
+                    else:
+                        systolic_bp = float(val)
                     bp_date = t_date
                 except (ValueError, TypeError):
                     pass
@@ -174,26 +177,67 @@ class ClinicalRuleEngine:
                     confidence_score=bp_confidence
                 ))
 
-        # Rule 3: Screening Gaps
-        care_gaps.append(CareGapItem(
-            gap_id="GAP-EYE-001",
-            title="Diabetic Retinal Eye Examination Overdue",
-            severity="MEDIUM",
-            confidence_score=0.88,
-            evidence_sources=["EHR Screening Registry (No exam documented in last 12 months)"],
-            recommendation="Schedule annual dilated retinal eye examination with ophthalmology.",
-            requires_hitl_approval=True
-        ))
+        # Rule 3: Screening Gaps & Disease-Specific Metrics
+        has_diabetes = any("diabet" in d.lower() for d in active_diagnoses)
 
-        care_gaps.append(CareGapItem(
-            gap_id="GAP-UACR-001",
-            title="Urine Albumin-to-Creatinine Ratio (uACR) Overdue",
-            severity="LOW",
-            confidence_score=0.85,
-            evidence_sources=["EHR Nephropathy Screening Registry (No uACR check in last 12 months)"],
-            recommendation="Order spot urine uACR to assess diabetic nephropathy risk.",
-            requires_hitl_approval=False
-        ))
+        if has_diabetes:
+            care_gaps.append(CareGapItem(
+                gap_id="GAP-EYE-001",
+                title="Diabetic Retinal Eye Examination Overdue",
+                severity="MEDIUM",
+                confidence_score=0.88,
+                evidence_sources=["EHR Screening Registry (No exam documented in last 12 months)"],
+                recommendation="Schedule annual dilated retinal eye examination with ophthalmology.",
+                requires_hitl_approval=True
+            ))
+
+            care_gaps.append(CareGapItem(
+                gap_id="GAP-UACR-001",
+                title="Urine Albumin-to-Creatinine Ratio (uACR) Overdue",
+                severity="LOW",
+                confidence_score=0.85,
+                evidence_sources=["EHR Nephropathy Screening Registry (No uACR check in last 12 months)"],
+                recommendation="Order spot urine uACR to assess diabetic nephropathy risk.",
+                requires_hitl_approval=False
+            ))
+
+        # Check for cholesterol / lipid lab results
+        for lab in labs:
+            test = (lab.get("name") or lab.get("test_name") or "").lower()
+            val = lab.get("result_value") or lab.get("result_val")
+            t_date = lab.get("date") or lab.get("timestamp") or "Recent"
+            if "cholesterol" in test or "lipid" in test:
+                try:
+                    c_num = float(val)
+                    if c_num > 200:
+                        quality_metrics.append(HEDISQualityMetric(
+                            metric_id="HEDIS_SPC_CHOL",
+                            title="HEDIS SPC (Statin Therapy / Lipid Control)",
+                            status="SUBOPTIMAL",
+                            current_value=f"{c_num} mg/dL",
+                            target_threshold="< 200 mg/dL",
+                            confidence_score=0.94
+                        ))
+                        care_gaps.append(CareGapItem(
+                            gap_id="GAP-SPC-001",
+                            title="Elevated Total Cholesterol & Statin Optimization",
+                            severity="MEDIUM",
+                            confidence_score=0.94,
+                            evidence_sources=[f"LOINC: 2093-3 (Total Cholesterol: {c_num} mg/dL, Date: {t_date})"],
+                            recommendation="Review lipid panel and consider titrating statin therapy or dietary counseling.",
+                            requires_hitl_approval=True
+                        ))
+                    else:
+                        quality_metrics.append(HEDISQualityMetric(
+                            metric_id="HEDIS_SPC_CHOL",
+                            title="HEDIS SPC (Statin Therapy / Lipid Control)",
+                            status="PASS",
+                            current_value=f"{c_num} mg/dL",
+                            target_threshold="< 200 mg/dL",
+                            confidence_score=0.94
+                        ))
+                except (ValueError, TypeError):
+                    pass
 
         # Rule 4: Medication Adherence Risk from Clinical Notes
         for note in notes:

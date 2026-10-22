@@ -1,7 +1,41 @@
 // Healthcare Multi-Agent Web UI Logic
-let currentThreadId = `thread_session_${Date.now()}`;
+let currentThreadId = `thread_p101_${Date.now()}`;
+
+const PATIENT_PROFILES = {
+    P101: {
+        id: 'P101',
+        name: 'Eleanor Vance',
+        mrn: 'MRN-884920',
+        demographics: '59F (1965-04-12)',
+        condition: 'Diabetes T2 & Hypertension',
+        badgeClass: 'badge warning',
+        sampleMed: 'Lisinopril 20mg daily',
+        scenarios: {
+            care_gaps: 'Analyze patient P101 for care gaps and HEDIS quality compliance.',
+            medication: 'Prescribe Lisinopril 20mg daily for patient P101 due to elevated BP.',
+            note: 'Update clinical progress note for patient P101 noting diet compliance.',
+            summary: 'Get patient summary for P101 and check recent lab results.'
+        }
+    },
+    P102: {
+        id: 'P102',
+        name: 'Marcus Brody',
+        mrn: 'MRN-110293',
+        demographics: '66M (1958-11-03)',
+        condition: 'Hyperlipidemia & CVD Risk',
+        badgeClass: 'badge info',
+        sampleMed: 'Atorvastatin 40mg daily',
+        scenarios: {
+            care_gaps: 'Analyze patient P102 for care gaps and HEDIS quality compliance.',
+            medication: 'Prescribe Atorvastatin 40mg daily for patient P102 due to elevated cholesterol.',
+            note: 'Update clinical progress note for patient P102 noting diet and exercise compliance.',
+            summary: 'Get patient summary for P102 and check recent lab results.'
+        }
+    }
+};
 
 document.addEventListener('DOMContentLoaded', () => {
+    updatePatientContextUI();
     fetchPendingTickets();
     setInterval(fetchPendingTickets, 10000); // Poll pending tickets every 10s
 });
@@ -14,10 +48,55 @@ function getSelectedPatient() {
     return document.getElementById('patient-select').value;
 }
 
-function sendQuickPrompt(promptText) {
+function updatePatientContextUI() {
+    const pid = getSelectedPatient();
+    const profile = PATIENT_PROFILES[pid] || PATIENT_PROFILES['P101'];
+
+    const mrnEl = document.getElementById('pat-mrn');
+    const demoEl = document.getElementById('pat-demographics');
+    const badgeEl = document.getElementById('pat-condition-badge');
+    const promptInput = document.getElementById('prompt-input');
+
+    if (mrnEl) mrnEl.textContent = profile.mrn;
+    if (demoEl) demoEl.textContent = profile.demographics;
+    if (badgeEl) {
+        badgeEl.textContent = profile.condition;
+        badgeEl.className = profile.badgeClass;
+    }
+
+    if (promptInput) {
+        promptInput.placeholder = `Type a clinical inquiry or prompt-driven action (e.g., 'Order ${profile.sampleMed} for ${pid}')...`;
+    }
+}
+
+function onPatientChange() {
+    const pid = getSelectedPatient();
+    updatePatientContextUI();
+    currentThreadId = `thread_${pid.toLowerCase()}_${Date.now()}`;
+    const profile = PATIENT_PROFILES[pid] || PATIENT_PROFILES['P101'];
+    renderMessage('system', `🔄 Context switched to **${profile.name}** (Patient ID: \`${pid}\`, MRN: \`${profile.mrn}\`). All inquiries, test scenarios, and orders are now scoped to this patient.`);
+    fetchPendingTickets();
+}
+
+function triggerScenario(scenarioKey) {
+    const pid = getSelectedPatient();
+    const profile = PATIENT_PROFILES[pid] || PATIENT_PROFILES['P101'];
+    const promptText = profile.scenarios[scenarioKey] || `Get patient summary for ${pid} and check recent lab results.`;
     document.getElementById('prompt-input').value = promptText;
     submitPrompt();
 }
+
+function sendQuickPrompt(promptText) {
+    const pid = getSelectedPatient();
+    // Safety check: dynamically replace any hardcoded P101/P102 with currently selected patient ID
+    let text = promptText;
+    if (/\bP10[1-9]\b/i.test(text)) {
+        text = text.replace(/\bP10[1-9]\b/gi, pid);
+    }
+    document.getElementById('prompt-input').value = text;
+    submitPrompt();
+}
+
 
 /**
  * Extracts plain text / Markdown from any response payload,
@@ -78,8 +157,22 @@ async function submitPrompt() {
     const promptText = promptInput.value.trim();
     if (!promptText) return;
 
-    const patientId = getSelectedPatient();
+    let patientId = getSelectedPatient();
     const role = getActiveRole();
+
+    // Auto-align if user explicitly specified a patient ID in their prompt
+    const explicitMatch = promptText.match(/\b(P10[1-9])\b/i);
+    if (explicitMatch) {
+        const explicitPid = explicitMatch[1].toUpperCase();
+        if (explicitPid !== patientId) {
+            const patSelect = document.getElementById('patient-select');
+            if (patSelect && patSelect.querySelector(`option[value="${explicitPid}"]`)) {
+                patSelect.value = explicitPid;
+                patientId = explicitPid;
+                updatePatientContextUI();
+            }
+        }
+    }
 
     // Render User Message
     renderMessage('user', promptText);
@@ -102,6 +195,7 @@ async function submitPrompt() {
                 use_hitl: true
             })
         });
+
 
         const data = await response.json();
         removeLoader(loaderId);
@@ -160,6 +254,25 @@ function renderMessage(sender, text) {
     chatFeed.scrollTop = chatFeed.scrollHeight;
 }
 
+function getActionSummaryText(act) {
+    if (!act) return 'Clinical write operation requested.';
+    if (act.reason) return act.reason;
+    if (act.action_type === 'ADD_LAB_RESULT') {
+        const valStr = act.systolic && act.diastolic ? `${act.systolic}/${act.diastolic}` : act.value;
+        return `Record ${act.test_name || 'Lab Observation'}: ${valStr} ${act.unit || ''} (LOINC: ${act.loinc || 'N/A'}) for patient ${act.patient_id || 'P101'}`;
+    }
+    if (act.action_type === 'CREATE_MEDICATION_ORDER') {
+        return `Order ${act.drug_name || 'Medication'} ${act.dosage || ''} ${act.frequency || 'daily'} for patient ${act.patient_id || 'P101'}`;
+    }
+    if (act.action_type === 'UPDATE_PATIENT_NOTE') {
+        return `Update clinical progress note: "${act.note_content || ''}" for patient ${act.patient_id || 'P101'}`;
+    }
+    if (act.action_type === 'REMEDIATE_CARE_GAP') {
+        return `Remediate ${act.title || act.gap_id || 'Care Gap'}: ${act.recommendation || ''}`;
+    }
+    return act.title || JSON.stringify(act);
+}
+
 function renderHITLMessage(data) {
     const chatFeed = document.getElementById('chat-messages');
     const msgDiv = document.createElement('div');
@@ -167,38 +280,62 @@ function renderHITLMessage(data) {
 
     const ticket = data.ticket || {};
     const pendingAction = data.pending_action || {};
-    const params = pendingAction.params || {};
+    
+    // Support multiple or single pending actions
+    const actionsList = (ticket.pending_actions && ticket.pending_actions.length > 0)
+        ? ticket.pending_actions
+        : (data.pending_actions && data.pending_actions.length > 0)
+            ? data.pending_actions
+            : (pendingAction.params ? [pendingAction.params] : []);
 
-    let detailsStr = params.reason;
-    if (!detailsStr) {
-        if (params.drug_name) {
-            detailsStr = `Order ${params.drug_name} ${params.dosage || ''} ${params.frequency || 'daily'} for patient ${params.patient_id || 'P101'}`;
-        } else if (params.note_content) {
-            detailsStr = `Update progress note: "${params.note_content}"`;
-        } else if (params.recommendation) {
-            detailsStr = `Remediate ${params.title || params.gap_id || 'Care Gap'}: ${params.recommendation}`;
-        } else {
-            detailsStr = `Action ${pendingAction.action_type || 'WRITE_ACTION'} requested for patient ${params.patient_id || 'P101'}`;
-        }
+    const isMultiple = actionsList.length > 1;
+
+    let actionsDetailsHtml = '';
+    if (isMultiple) {
+        actionsDetailsHtml = `
+            <div class="hitl-actions-list-container">
+                <div class="hitl-multi-actions-header">
+                    <span>📋 <strong>${actionsList.length} Clinical Orders Staged for Attestation:</strong></span>
+                </div>
+                <div class="hitl-actions-list">
+                    ${actionsList.map((act, i) => `
+                        <div class="hitl-action-card-item">
+                            <div class="hitl-action-item-badge">#${i + 1} • ${escapeHtml(act.action_type || 'WRITE_ACTION')}</div>
+                            <div class="hitl-action-item-desc">${escapeHtml(getActionSummaryText(act))}</div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="hitl-status-row" style="margin-top: 10px; font-family: monospace; font-size: 12px; color: var(--text-secondary);">
+                    <strong>Status:</strong> ${escapeHtml(ticket.status || 'AWAITING_CLINICIAN_APPROVAL')}
+                </div>
+            </div>
+        `;
+    } else {
+        const act = actionsList[0] || pendingAction.params || {};
+        actionsDetailsHtml = `
+            <div class="hitl-action-details">
+                <strong>Action:</strong> ${escapeHtml(act.action_type || pendingAction.action_type || 'CREATE_MEDICATION_ORDER')}<br>
+                <strong>Details:</strong> ${escapeHtml(getActionSummaryText(act))}<br>
+                <strong>Status:</strong> ${escapeHtml(ticket.status || 'AWAITING_CLINICIAN_APPROVAL')}
+            </div>
+        `;
     }
+
+    const btnText = isMultiple ? `✓ Approve & Execute ${actionsList.length} Orders` : '✓ Approve & Execute Order';
 
     msgDiv.innerHTML = `
         <div class="avatar">❖</div>
         <div class="content">
             <h4>🟡 Action Paused - Clinician Attestation Required</h4>
-            <p>The AI Agent requested to execute a clinical write action. Pursuant to HIPAA and HITL governance rules, execution is suspended until an authorized clinician approves the order.</p>
+            <p>The AI Agent requested to execute ${isMultiple ? `${actionsList.length} clinical write actions` : 'a clinical write action'}. Pursuant to HIPAA and HITL governance rules, execution is suspended until an authorized clinician approves the order set.</p>
             <div class="hitl-ticket-box">
                 <div class="hitl-header">
                     <span class="hitl-title">🎫 Ticket ID: ${ticket.ticket_id || 'HITL-001'}</span>
                     <span class="eta-badge">⏱️ Est. ETA: ${ticket.estimated_eta || '15 mins'}</span>
                 </div>
-                <div class="hitl-action-details">
-                    <strong>Action:</strong> ${pendingAction.action_type || 'CREATE_MEDICATION_ORDER'}<br>
-                    <strong>Details:</strong> ${escapeHtml(detailsStr)}<br>
-                    <strong>Status:</strong> ${ticket.status || 'AWAITING_CLINICIAN_APPROVAL'}
-                </div>
+                ${actionsDetailsHtml}
                 <div class="hitl-buttons">
-                    <button class="btn-approve" onclick="attestTicket('${ticket.ticket_id}', true)">✓ Approve & Execute Order</button>
+                    <button class="btn-approve" onclick="attestTicket('${ticket.ticket_id}', true)">${btnText}</button>
                     <button class="btn-reject" onclick="attestTicket('${ticket.ticket_id}', false)">✕ Reject & Cancel</button>
                 </div>
             </div>
@@ -533,14 +670,16 @@ async function fetchPendingTickets() {
             return;
         }
 
-        listDiv.innerHTML = tickets.map(t => `
+        listDiv.innerHTML = tickets.map(t => {
+            const multiBadge = (t.pending_actions && t.pending_actions.length > 1) ? ` (${t.pending_actions.length} items)` : '';
+            return `
             <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; font-size: 12px;">
                 <div style="display: flex; justify-content: space-between;">
                     <strong>${t.ticket_id}</strong>
                     <span class="badge warning">Pending</span>
                 </div>
                 <div style="margin-top: 4px; color: var(--text-secondary);">
-                    Action: ${t.action_type}<br>
+                    Action: ${t.action_type}${multiBadge}<br>
                     ETA: ${t.estimated_eta}
                 </div>
                 <div style="display: flex; gap: 6px; margin-top: 8px;">
@@ -548,7 +687,8 @@ async function fetchPendingTickets() {
                     <button class="btn-reject" style="padding: 4px 8px; font-size: 10px;" onclick="attestTicket('${t.ticket_id}', false)">Reject</button>
                 </div>
             </div>
-        `).join('');
+            `;
+        }).join('');
     } catch (err) {
         console.error('Failed to fetch pending tickets:', err);
     }

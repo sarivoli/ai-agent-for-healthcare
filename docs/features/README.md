@@ -10,6 +10,8 @@ Feature documents are named sequentially by module:
 - `04_dual_llm_phi_router.md` (Module 5)
 - `05_clinical_rules_and_hitl.md` (Module 6)
 - `06_production_hardening_and_ui.md` (Module 7)
+- `07_system_error_handling_and_output_normalization.md` (Production Incident Interception)
+- `08_visual_transaction_journey_and_audit_explorer.md` (Visual Audit Log & Pipeline Explorer)
 
 ## Standard Feature Document Template
 Each feature document follows this format:

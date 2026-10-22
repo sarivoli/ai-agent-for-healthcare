@@ -110,7 +110,7 @@ class CloudLLMProvider:
     Wrapper for Cloud LLM (Gemini 3.6 Flash).
     Receives de-identified payloads (PHI redacted) for high-level reasoning.
     """
-    def __init__(self, model_name: str = "gemini-3.6-flash"):
+    def __init__(self, model_name: str = "gemini-3.8-flash"):
         self.model_name = model_name
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
 

@@ -30,6 +30,9 @@
                         <option value="Auditor">🛡️ Compliance Auditor (Masked PHI)</option>
                     </select>
                 </div>
+                <a href="/audit" class="secondary-btn nav-btn" title="View Stage-by-Stage Transaction Journey & Audit Pipeline">
+                    <span>🔍 Audit Journey Log</span>
+                </a>
                 <div class="status-indicator online">
                     <span class="dot"></span> System Active
                 </div>
@@ -42,29 +45,29 @@
             <aside class="sidebar">
                 <div class="card patient-card">
                     <h3>Patient Context</h3>
-                    <select id="patient-select" class="styled-select wide">
-                        <option value="P101">P101 - Eleonora Vance (Type 2 Diabetes)</option>
-                        <option value="P102">P102 - Marcus Holloway (Hypertension)</option>
+                    <select id="patient-select" class="styled-select wide" onchange="onPatientChange()">
+                        <option value="P101">P101 - Eleanor Vance (Type 2 Diabetes)</option>
+                        <option value="P102">P102 - Marcus Brody (Hyperlipidemia)</option>
                     </select>
                     <div id="patient-summary" class="patient-info-box">
-                        <div class="info-row"><span>MRN:</span> <strong id="pat-mrn">P101</strong></div>
-                        <div class="info-row"><span>Age / Sex:</span> <strong id="pat-demographics">54F</strong></div>
-                        <div class="info-row"><span>Condition:</span> <span class="badge warning">Diabetes T2</span></div>
+                        <div class="info-row"><span>MRN:</span> <strong id="pat-mrn">MRN-884920</strong></div>
+                        <div class="info-row"><span>Age / Sex:</span> <strong id="pat-demographics">59F</strong></div>
+                        <div class="info-row"><span>Condition:</span> <span id="pat-condition-badge" class="badge warning">Diabetes T2</span></div>
                     </div>
                 </div>
 
                 <div class="card prompts-card">
                     <h3>Quick Test Scenarios</h3>
-                    <button class="prompt-chip" onclick="sendQuickPrompt('Analyze patient P101 for care gaps and HEDIS quality compliance.')">
+                    <button class="prompt-chip" onclick="triggerScenario('care_gaps')">
                         📊 HEDIS & Care Gap Analysis
                     </button>
-                    <button class="prompt-chip" onclick="sendQuickPrompt('Prescribe Lisinopril 20mg daily for patient P101 due to elevated BP.')">
+                    <button class="prompt-chip" onclick="triggerScenario('medication')">
                         ✍️ Order Medication (Triggers HITL)
                     </button>
-                    <button class="prompt-chip" onclick="sendQuickPrompt('Update clinical progress note for patient P101 noting diet compliance.')">
+                    <button class="prompt-chip" onclick="triggerScenario('note')">
                         📝 Update Clinical Note (HITL)
                     </button>
-                    <button class="prompt-chip" onclick="sendQuickPrompt('Get patient summary for P101 and check recent lab results.')">
+                    <button class="prompt-chip" onclick="triggerScenario('summary')">
                         🔍 General Clinical Summary
                     </button>
                 </div>

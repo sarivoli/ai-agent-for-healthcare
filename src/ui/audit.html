@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transaction Audit & Pipeline Journey Explorer | Healthcare AI Platform</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="audit-body">
+    <div class="audit-app-container">
+        <!-- Top Navigation Bar -->
+        <header class="app-header audit-header">
+            <div class="brand">
+                <div class="logo-icon">❖</div>
+                <div>
+                    <h1>Transaction Audit & Pipeline Journey Explorer</h1>
+                    <span class="subtitle">End-to-End Instruction Traversal • Dual-LLM Routing • HITL Attestation Audit</span>
+                </div>
+            </div>
+            <div class="header-controls">
+                <button id="refresh-traces-btn" class="secondary-btn" onclick="loadTraces()">
+                    <span class="btn-icon">↻</span> Refresh
+                </button>
+                <div class="live-toggle-wrapper">
+                    <label class="switch">
+                        <input type="checkbox" id="auto-refresh-toggle" checked onchange="toggleAutoRefresh(this.checked)">
+                        <span class="slider round"></span>
+                    </label>
+                    <span class="live-label">Live Sync</span>
+                </div>
+                <a href="/" class="primary-btn nav-btn">
+                    <span>💬 Clinical Workspace</span>
+                </a>
+            </div>
+        </header>
+
+        <!-- KPI Metrics Banner -->
+        <div class="audit-metrics-strip">
+            <div class="metric-card">
+                <div class="metric-icon cyan">⚡</div>
+                <div class="metric-data">
+                    <span class="metric-value" id="kpi-total-traces">0</span>
+                    <span class="metric-title">Total Transactions</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-icon blue">☁️</div>
+                <div class="metric-data">
+                    <span class="metric-value highlight-cyan" id="kpi-cloud-requests">0</span>
+                    <span class="metric-title">Cloud LLM (Gemini API)</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-icon purple">🏠</div>
+                <div class="metric-data">
+                    <span class="metric-value highlight-purple" id="kpi-local-requests">0</span>
+                    <span class="metric-title">Local LLM (On-Prem)</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-icon amber">🛑</div>
+                <div class="metric-data">
+                    <span class="metric-value" id="kpi-awaiting-approval">0</span>
+                    <span class="metric-title">HITL Paused</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-icon green">✅</div>
+                <div class="metric-data">
+                    <span class="metric-value" id="kpi-committed">0</span>
+                    <span class="metric-title">Actions Committed</span>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-icon purple">🛡️</div>
+                <div class="metric-data">
+                    <span class="metric-value">100% ZDR</span>
+                    <span class="metric-title">Zero Data Retention</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filter & Search Controls -->
+        <div class="audit-filters-bar">
+            <div class="search-box">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="trace-search" placeholder="Search by Trace ID, prompt keywords, Patient ID (P101)..." oninput="applyFilters()">
+            </div>
+            <div class="filter-pills" id="status-filter-group">
+                <button class="filter-pill active" data-status="ALL" onclick="setStatusFilter('ALL')">All Traces</button>
+                <button class="filter-pill" data-status="CLOUD_LLM" onclick="setStatusFilter('CLOUD_LLM')">☁️ Cloud Gemini</button>
+                <button class="filter-pill" data-status="LOCAL_LLM" onclick="setStatusFilter('LOCAL_LLM')">🏠 Local On-Prem</button>
+                <button class="filter-pill" data-status="AWAITING_APPROVAL" onclick="setStatusFilter('AWAITING_APPROVAL')">Awaiting Attestation</button>
+                <button class="filter-pill" data-status="COMPLETED" onclick="setStatusFilter('COMPLETED')">Completed</button>
+                <button class="filter-pill" data-status="COMMITTED" onclick="setStatusFilter('COMMITTED')">Committed</button>
+                <button class="filter-pill" data-status="BLOCKED" onclick="setStatusFilter('BLOCKED')">Blocked</button>
+            </div>
+            <div class="view-toggle-group">
+                <button id="view-mode-stages" class="view-tab-btn active" onclick="switchViewMode('stages')">Visual Stages</button>
+                <button id="view-mode-journal" class="view-tab-btn" onclick="switchViewMode('journal')">Audit Journal Log</button>
+            </div>
+        </div>
+
+        <!-- Main Workspace (Split Grid) -->
+        <div class="audit-workspace" id="stages-workspace">
+            <!-- Left Pane: Transaction Cards List -->
+            <aside class="traces-sidebar">
+                <div class="sidebar-header">
+                    <h3>Recent Transactions</h3>
+                    <span class="count-pill" id="filtered-count">0 items</span>
+                </div>
+                <div class="traces-scroll-list" id="traces-list">
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <p>Loading transaction traces from audit ledger...</p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Right Pane: Stage-by-Stage Journey Visualizer -->
+            <main class="trace-detail-panel" id="trace-detail-view">
+                <div class="empty-detail-state" id="empty-detail-placeholder">
+                    <div class="empty-art">❖</div>
+                    <h3>Select a Transaction Trace</h3>
+                    <p>Choose any transaction from the left panel to inspect its complete step-by-step traversal journey from client chat to server, Local LLM, Cloud Gemini, and EHR database.</p>
+                </div>
+
+                <!-- Active Journey Content (Populated via JS) -->
+                <div class="journey-content-wrapper" id="active-journey-content" style="display: none;">
+                    <!-- Overview Card -->
+                    <div class="card journey-overview-card">
+                        <div class="overview-top-row">
+                            <div class="trace-id-group">
+                                <span class="trace-badge">TRANSACTION TRACE</span>
+                                <h2 id="active-trace-id">TRX-000000</h2>
+                                <button class="copy-btn" onclick="copyActiveTraceId()" title="Copy Trace ID">📋 Copy</button>
+                            </div>
+                            <div class="status-badge-container" id="active-status-badge">
+                                <span class="badge success">COMPLETED</span>
+                            </div>
+                        </div>
+
+                        <!-- Prominent LLM Execution Route & Governance Banner -->
+                        <div id="active-execution-route-banner" class="execution-route-banner">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+
+                        <!-- Prompt Card -->
+                        <div class="prompt-display-box">
+                            <span class="box-label">ORIGINATING INSTRUCTION:</span>
+                            <p id="active-prompt-text" class="prompt-quote">"..."</p>
+                        </div>
+
+                        <!-- Metadata Badges -->
+                        <div class="overview-meta-grid">
+                            <div class="meta-item">
+                                <span class="meta-label">Active Patient:</span>
+                                <strong id="active-patient-id" class="meta-val">P101</strong>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">User Role:</span>
+                                <strong id="active-user-role" class="meta-val">Clinician</strong>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Session / Thread:</span>
+                                <strong id="active-session-id" class="meta-val">thread_101</strong>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Start Time:</span>
+                                <strong id="active-start-time" class="meta-val">--</strong>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Total Stages:</span>
+                                <strong id="active-total-steps" class="meta-val">5 Stages</strong>
+                            </div>
+                        </div>
+
+                        <!-- LLM Routing & Token Telemetry Strip -->
+                        <div class="overview-telemetry-strip" id="active-llm-telemetry-strip">
+                            <div class="telemetry-pill">
+                                <span class="pill-icon">🤖</span>
+                                <div class="pill-text">
+                                    <span class="pill-label">Model & Connection:</span>
+                                    <strong id="active-telemetry-model" class="pill-value highlight-cyan">Google Gemini API (ZDR)</strong>
+                                </div>
+                            </div>
+                            <div class="telemetry-pill">
+                                <span class="pill-icon">⚡</span>
+                                <div class="pill-text">
+                                    <span class="pill-label">Call Tokens:</span>
+                                    <strong id="active-telemetry-tokens" class="pill-value highlight-amber">--</strong>
+                                </div>
+                            </div>
+                            <div class="telemetry-pill">
+                                <span class="pill-icon">📊</span>
+                                <div class="pill-text">
+                                    <span class="pill-label">Session Quota Used:</span>
+                                    <strong id="active-telemetry-quota" class="pill-value highlight-green">--</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Visual Progress Stepper (Pipeline Flow Diagram) -->
+                    <div class="card pipeline-stepper-card">
+                        <div class="stepper-title-row">
+                            <h3>Journey Traversal Pipeline</h3>
+                            <span class="stepper-hint">Click any milestone to inspect that stage</span>
+                        </div>
+                        <div class="stepper-track-container" id="stepper-track">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+
+                    <!-- Stage-by-Stage Detailed Breakdown -->
+                    <div class="stages-breakdown-section">
+                        <div class="section-title-row">
+                            <h3>Stage-by-Stage Detailed Audit Breakdown</h3>
+                            <button class="expand-all-btn" onclick="toggleExpandAllStages()">Expand All Details</button>
+                        </div>
+                        <div class="stage-cards-container" id="stage-cards-list">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Journal Text View Workspace (Alternate Tab) -->
+        <div class="audit-journal-workspace" id="journal-workspace" style="display: none;">
+            <div class="journal-card">
+                <div class="journal-header">
+                    <div class="journal-title">
+                        <span class="journal-icon">📜</span>
+                        <div>
+                            <h3>Append-Only System Audit Journal (`audit_journey.log`)</h3>
+                            <span class="subtitle">Immutable chronological transaction ledger persisted to disk</span>
+                        </div>
+                    </div>
+                    <div class="journal-actions">
+                        <button class="secondary-btn" onclick="loadJournalLog()">↻ Reload Log</button>
+                        <button class="secondary-btn" onclick="downloadJournalLog()">⬇ Download Log</button>
+                    </div>
+                </div>
+                <div class="terminal-log-viewer" id="journal-log-content">
+                    Loading audit journal...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script -->
+    <script src="/static/audit.js"></script>
+</body>
+</html>

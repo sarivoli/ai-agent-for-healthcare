@@ -1485,3 +1485,276 @@ tests\test_text_extractor_and_error_handling.py ......                   [100%]
 ======================= 66 passed, 4 warnings in 26.54s =======================
 ```
 
+---
+
+## 7.10 Module Extension: Instruction Journey, Local LLM Setup & Dedicated Audit Tracing
+
+### 7.10.1 Concept Primer: The Complete Healthcare Instruction Journey
+
+Every clinician query or action instruction submitted through the chat interface traverses a strict multi-layer architectural perimeter before touching EHR data or generative models:
+
+```
+[Chat UI / Client]
+       │
+       ▼
+[1. Ingress & Auth] ───> OAuth 2.1 Token Verification & Field-Level RBAC
+       │
+       ▼
+[2. Input Guardrails] ──> Zero-Token Perimeter (Blocks jailbreaks, injections, SQL exploits)
+       │
+       ▼
+[3. Quota Governance] ──> Token Tracker with Department Multipliers & Grace Buffers
+       │
+       ▼
+[4. PHI Classifier] ────> Scans 18 HIPAA Categories (Names, MRNs, DOBs, Addresses)
+       │
+       ├─── [PHI Detected] ───> Option A: Local LLM (Ollama Llama-3) strictly on-premise (ZDR)
+       │                    ───> Option B: De-Identification Proxy (Redacts PHI -> Cloud Gemini -> Re-identifies locally)
+       └─── [No PHI] ─────────> Direct Cloud Google Gemini 3.6 Flash for high-level reasoning
+       │
+       ▼
+[5. Dynamic CRUD Parsing] -> Extracts Medication Orders, Lab Data, or Clinical Notes
+       │
+       ▼
+[6. HITL Interrupt Gate] ─> State machine pauses; generates attestation ticket for clinician
+       │
+       ▼ (Clinician Approval)
+[7. EHR DB Committal] ──> Writes new prescription, lab record, or progress note
+       │
+       ▼
+[8. Dedicated Audit Log] -> Records JSON trace in `reports/transaction_traces/TRX-*.json`
+```
+
+---
+
+### 7.10.2 Installing Local Model (Ollama) & Connecting Google Gemini API
+
+#### 1. Installing & Running Local LLM (Ollama):
+- **Windows (PowerShell):**
+  ```powershell
+  # Download and install Ollama from https://ollama.com/download/windows
+  # Pull and start Llama-3 locally:
+  ollama run llama3:8b
+  ```
+- **Linux / macOS (Bash):**
+  ```bash
+  # Install Ollama CLI:
+  curl -fsSL https://ollama.ai/install.sh | sh
+  # Pull and start Llama-3 locally:
+  ollama run llama3:8b
+  ```
+
+#### 2. Connecting `.env` for Dual-LLM Routing:
+Edit your `.env` file in the project root:
+```env
+GOOGLE_API_KEY=your_gemini_api_key_here
+OLLAMA_BASE_URL=http://localhost:11434
+USE_MOCK_LOCAL_LLM=false
+```
+
+When `USE_MOCK_LOCAL_LLM=false`, queries containing PHI route directly to your local Ollama node. When `true`, the platform uses the built-in deterministic offline privacy model.
+
+---
+
+### 7.10.3 Dynamic Chat-Driven CRUD Operations
+
+Clinicians can perform write operations directly through conversational instructions:
+1. **Medication Orders:** `"Prescribe Metformin 500mg daily"` or `"Order Lisinopril 20mg"`
+2. **Lab Observations:** `"Add lab result HbA1c 7.1% for patient P101"` or `"Record lab Potassium 4.5 mEq/L"`
+3. **Clinical Notes:** `"Add clinical note for patient P101: Patient attended diabetic foot exam with normal findings"`
+
+All three operations trigger an automatic **Human-in-the-Loop (HITL) Interrupt Gate**, requiring explicit clinician attestation before committing to the database.
+
+---
+
+### 7.10.4 Dedicated Audit Log System & API Endpoints
+
+Every instruction lifecycle is assigned a unique Transaction Trace ID (`TRX-timestamp-hash`) and recorded in two persistent audit stores:
+1. **Structured JSON Traces:** `reports/transaction_traces/TRX-*.json`
+2. **Append-Only Journal:** `reports/transaction_traces/audit_journey.log`
+
+#### Available Trace Review Endpoints:
+- `GET /api/audit/traces`: Returns the latest 50 transaction lifecycle journeys.
+- `GET /api/audit/traces/{trace_id}`: Returns the exact step-by-step path for a given transaction.
+- `GET /api/audit/journey-log`: Returns the human-readable text audit log.
+
+---
+
+### 7.10.5 How to Run the Verification Demo & Tests
+
+#### 🪟 Windows Terminal:
+```powershell
+# Run the complete instruction journey demo:
+venv\Scripts\python.exe scripts\demo_instruction_journey.py
+
+# Run the test suite (71 tests):
+venv\Scripts\python.exe -m pytest
+```
+
+#### 🐧 Linux / 🍎 macOS Terminal:
+```bash
+# Run the complete instruction journey demo:
+venv/bin/python3 scripts/demo_instruction_journey.py
+
+# Run the test suite (71 tests):
+PYTHONPATH=. venv/bin/python3 -m pytest
+```
+
+---
+
+### 7.10.6 Visual Transaction Audit & Pipeline Journey Explorer (`/audit`)
+
+To provide clinicians, compliance auditors, and system administrators with complete transparency into what happened for each transaction, the platform provides an interactive visual audit log page at `/audit`.
+
+#### Key Visual Components:
+1. **Top KPI Metrics Strip:**
+   - **Recorded Transactions**: Real-time count of all transactions logged to disk.
+   - **HITL Attestations Paused**: Count of operations held at human-in-the-loop review gates.
+   - **EHR Actions Committed**: Count of clinical mutations written to the patient record.
+   - **100% ZDR Compliance**: Zero Data Retention badge.
+2. **Real-Time Transaction Ledger Sidebar:**
+   - Displays all recent transaction cards with status badges (`AWAITING_APPROVAL`, `COMMITTED`, `COMPLETED`, `BLOCKED`).
+   - Includes real-time auto-sync (4-second polling), instant search by Trace ID or prompt, and status filter pills.
+3. **Subway-Style Traversal Pipeline:**
+   - Horizontal pipeline stepper showing each milestone node (`INGRESS_CLIENT` ➔ `INPUT_GUARDRAILS` ➔ `CLINICAL_RULES_ENGINE` ➔ `HITL_GATE` ➔ `CLINICIAN_ATTESTATION` ➔ `EHR_DB_COMMITTAL` ➔ `EGRESS_CLIENT`).
+   - Clicking any node smoothly scrolls and flashes the corresponding detail card.
+4. **Plain-Language "Story Cards":**
+   - Each stage features a lightbulb story box translating complex machine telemetry into clinical explanations:
+     - *"What happened at this stage: The zero-token security perimeter scanned the prompt against adversarial injection dictionaries... Verification passed with 0 threats detected."*
+     - *"What happened at this stage: Attending clinician DR-JENKINS-99 reviewed the clinical recommendation and submitted an APPROVED attestation."*
+5. **Structured Parameters Grid & Collapsible Raw JSON:**
+   - Structured badges for staged medications, lab observations, dosages, and confidence scores.
+   - Click `{ } Raw Step Telemetry` to expand raw JSON payload.
+6. **Immutable Audit Journal Log Viewer (`audit_journey.log`):**
+   - One-click toggle to a dark terminal-style viewer showing the append-only chronological ledger on disk, with reload and download actions.
+
+#### How to Access:
+- **Web Browser URL:** `http://localhost:8000/audit`
+- **From Clinical Workspace:** Click the **"🔍 Audit Journey Log"** button in the top navigation header of `http://localhost:8000/`.
+
+---
+
+### 7.10.7 Dynamic Vital Sign (BP) Staging, Zero-Hallucination Gate & Database Persistence
+
+#### 1. The Core Problem
+When a clinician inputs a vital sign update like *"add current bp as 140/90"*, standard conversational LLMs may return an empathetic reply like *"I have updated the patient's blood pressure to 140/90 mmHg"*. However, in a multi-tier clinical platform:
+1. **No State Mutation:** The conversational model does not possess write privileges to the relational database; the confirmation is a dangerous hallucination.
+2. **Missing State in Subsequent Summaries:** When the clinician later queries *"Show clinical summary"*, the new blood pressure is missing from the EHR because it was never committed.
+3. **FHIR String Parsing Crashes:** Blood pressure is commonly recorded as a composite string (e.g., `"140/90"`). Passing this directly to `float(value)` in FHIR observation normalizers or HEDIS CBP rule calculators triggers uncaught `ValueError` crashes.
+
+#### 2. The Architectural Solution
+1. **Strict Vital-Sign Regex Interceptor (`src/agents/hitl_agent.py`):**
+   - Intercepts patterns such as `add current bp as 140/90`, `record bp 140/90`, and `bp 130/80`.
+   - Stages a formal `ADD_LAB_RESULT` action with LOINC code `85354-9` (Blood Pressure panel) with component systolic (140) and diastolic (90) values.
+   - Strictly halts the agent graph at the `HITL_GATE` interrupt, requiring explicit physician attestation.
+2. **Transactional Database Committal (`src/db/mock_healthcare_db.py`):**
+   - Upon clinician approval, writes three records to the patient's observation ledger:
+     - `Systolic Blood Pressure` (140 mmHg, LOINC `8480-6`)
+     - `Diastolic Blood Pressure` (90 mmHg, LOINC `8462-4`)
+     - `Blood Pressure` (`140/90` mmHg, LOINC `85354-9`)
+3. **Fresh Retrieval & Safe Normalization:**
+   - Summary synthesis nodes (`synthesize_summary_node`, `_fallback_intent_synthesis`) query fresh, un-truncated database records.
+   - `src/fhir/normalizer.py` and `src/rules/rule_engine.py` split slash-formatted strings to safely extract numeric systolic values for HEDIS CBP care gap evaluation without crashing.
+
+---
+
+### 7.10.8 LLM Connection, Token Telemetry & Real-Time Audit Ribbon
+
+#### 1. Real-Time Telemetry Tracking
+Each transaction trace in `reports/transaction_traces/TRX-*.json` now records an immutable `llm_telemetry` snapshot capturing:
+- **Provider & Connection Type:** `Cloud LLM (Google Gemini API via langchain-google-genai)` vs. `Local On-Premise LLM (Ollama / vLLM)`.
+- **Model Identifier & Endpoint:** e.g., `gemini-3.6-flash` (`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent`).
+- **Granular Token Metrics:** Prompt tokens, completion tokens, and total transaction tokens.
+- **Session Quota Accumulator:** Total tokens consumed so far in the active session and remaining quota buffer before department multipliers or rate limits activate.
+
+#### 2. Visual Audit Explorer Ribbon (`/audit`)
+The Visual Audit Explorer renders a 3-pill Telemetry Ribbon in the Journey Overview header:
+- 🌐 **Model & Connection Badge (Cyan)**: Displays active model and API route.
+- ⚡ **Call Tokens (Amber)**: Shows prompt / completion / total breakdown.
+- 📊 **Session Quota Used (Green)**: Shows total session expenditure and quota balance.
+
+#### 3. Newest-First Trace Ordering
+The audit tracker (`src/security/audit_tracker.py`) sorts trace files by modification time (`st_mtime, reverse=True`) and the frontend ledger (`src/ui/audit.js`) sorts by timestamp descending, ensuring that the latest clinical queries always appear at the top of the "Recent Transactions" sidebar.
+
+---
+
+### 7.10.9 Dynamic Multi-Patient Context Switching (P101/P102) & Prompt Scenario Alignment
+
+#### 1. The Core Problem
+When testing multi-patient EHR platforms:
+1. **Hardcoded HTML Chips:** Quick test scenario buttons in standard UI templates often embed static patient identifiers (e.g., `sendQuickPrompt('Get patient summary for P101...')`). When a clinician selects Patient 102 in the dropdown, clicking the chip sent a message asking for P101 while the API payload requested P102, creating contradictory chat logs.
+2. **Static Sidebar Context:** The patient demographics card (MRN, age/sex, conditions) remained static and did not re-render upon dropdown selection.
+3. **Hardcoded Fallback Summaries:** Summary synthesis logic hardcoded Eleanor Vance (P101) demographics and diabetes rules, returning diabetes data even when querying Marcus Brody (P102, who has Hyperlipidemia).
+
+#### 2. The Architectural Solution
+1. **Dynamic Client Profiles (`src/ui/app.js`):**
+   - Configured `PATIENT_PROFILES` map for P101 (Eleanor Vance - Diabetes T2) and P102 (Marcus Brody - Hyperlipidemia).
+   - `onPatientChange()` dynamically updates `#pat-mrn`, `#pat-demographics`, `#pat-condition-badge`, and `#prompt-input` placeholder in real-time.
+   - `triggerScenario(key)` dynamically pulls scenario prompts tailored for the active patient.
+   - `sendQuickPrompt()` sanitizes and replaces mismatched patient IDs on the fly.
+2. **Bi-Directional Auto-Synchronization:**
+   - In `submitPrompt()` and `src/api/server.py`, if the user explicitly types a patient ID (e.g., `for P102`), the UI dropdown and server `effective_patient_id` automatically reconcile so the prompt text and execution target are 100% unified.
+3. **Condition-Aware Rules Engine & Summary Engine (`src/rules/rule_engine.py`, `src/agents/hitl_agent.py`):**
+   - Condition-aware rule evaluation: Diabetes metrics (HbA1c, eye exam, uACR) evaluate for diabetic patients, while Statin / Cholesterol metrics (`HEDIS_SPC_CHOL`) evaluate for hyperlipidemia patients.
+   - Fallback and LLM synthesis dynamically parse patient resources, diagnoses, and labs from the FHIR bundle.
+
+---
+
+### 7.10.10 Verification Demo & Automated PyTest Suite (78 Tests)
+
+#### 🪟 Windows Terminal:
+```powershell
+# Run the dynamic patient context and scenario alignment test suite:
+venv\Scripts\python.exe -m pytest tests/test_patient_context_and_scenarios.py -v
+
+# Run the complete test suite (78 tests passing):
+venv\Scripts\python.exe -m pytest
+```
+
+#### 🐧 Linux / 🍎 macOS Terminal:
+```bash
+# Run the dynamic patient context and scenario alignment test suite:
+PYTHONPATH=. venv/bin/python3 -m pytest tests/test_patient_context_and_scenarios.py -v
+
+# Run the complete test suite (78 tests passing):
+PYTHONPATH=. venv/bin/python3 -m pytest
+```
+
+---
+
+## 🎓 Module 7.11: Dynamic Lab Committal (HbA1c), Clinical Summary Prioritization & Dual-LLM Routing Visualizer
+
+### 7.11.1 Concept Primer & Root Cause Analysis
+
+1. **Why was HbA1c showing stale data in clinical summaries?**
+   - **LOINC & Name Discordance:** When a user requested `"can you add hba1c 8.6 as per todays report"`, the database record needed standardized terminology matching LOINC `4548-4` and test name `"Hemoglobin A1c (HbA1c)"`.
+   - **Chronological Sorting:** Lab queries in `mock_healthcare_db.py` are now sorted descending by `timestamp` so the most recent observation is always at index 0.
+   - **Prompt Truncation Cutoff:** In `synthesize_summary_node`, the FHIR JSON payload was previously sliced with `[:1500]`, which severed the `labs` list (located at character 6,240+) before the LLM could read it. This was removed, and latest lab results are now explicitly injected at the top of the prompt.
+   - **Comparative Synthesis:** Both Gemini 3.8 Flash and offline fallback reports explicitly highlight `[LATEST]` vs `(Prior Baseline)` and comment on glycemic trajectory (e.g. 8.6% vs 8.4%).
+
+2. **Visual Traversal & Cloud vs Local Metrics in `/audit`:**
+   - Every transaction trace now tags `route_type` as `"CLOUD"` (Google Gemini API via HTTPS REST with Zero Data Retention) or `"LOCAL"` (On-premise loopback).
+   - The `/audit` dashboard provides a 6-metric KPI strip displaying real-time aggregated counts for Total Transactions, Cloud LLM, Local LLM, Paused HITL Attestations, Committed EHR Actions, and 100% ZDR Safe Harbor.
+   - Each trace detail view includes an interactive **Execution Route & Governance** banner visualizing the exact step-by-step data hop traversal from Chat UI -> Ingress -> Guardrails -> PHI De-ID -> Model Provider -> EHR Committal -> Client.
+
+---
+
+### 7.11.2 Verification Commands (80 Tests)
+
+#### 🪟 Windows Terminal:
+```powershell
+# Run the dynamic HbA1c & audit routing test suite:
+venv\Scripts\python.exe -m pytest tests/test_hba1c_and_audit_routing.py -v
+
+# Run the complete test suite (all 80 tests passing):
+venv\Scripts\python.exe -m pytest
+```
+
+#### 🐧 Linux / 🍎 macOS Terminal:
+```bash
+# Run the dynamic HbA1c & audit routing test suite:
+PYTHONPATH=. venv/bin/python3 -m pytest tests/test_hba1c_and_audit_routing.py -v
+
+# Run the complete test suite (all 80 tests passing):
+PYTHONPATH=. venv/bin/python3 -m pytest
+```

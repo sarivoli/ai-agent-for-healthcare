@@ -107,6 +107,18 @@ def get_root():
     }
 
 
+@app.get("/audit")
+def get_audit_page():
+    """Serve Dedicated Transaction Journey Audit Explorer."""
+    audit_path = UI_DIR / "audit.html"
+    if audit_path.exists():
+        return FileResponse(str(audit_path))
+    return {
+        "status": "error",
+        "message": "Audit page not found."
+    }
+
+
 @app.post("/api/chat")
 def process_chat_request(
     req: ChatRequest,
@@ -119,6 +131,11 @@ def process_chat_request(
     auth_claim = verify_oauth_token(authorization or "")
     user_role = auth_claim.get("role", "Clinician")
     thread_id = req.thread_id or f"thread_{user_role.lower()}_101"
+
+    # Reconcile effective patient ID if prompt explicitly specifies a target patient ID
+    import re
+    match_pid = re.search(r"\b(P10[1-9])\b", req.prompt, re.IGNORECASE)
+    effective_patient_id = match_pid.group(1).upper() if match_pid else req.patient_id
 
     # Enforce basic action permission check for data retrieval
     try:
@@ -142,7 +159,7 @@ def process_chat_request(
         if req.use_hitl:
             from src.agents.hitl_agent import run_hitl_agent_pipeline
             res = run_hitl_agent_pipeline(
-                patient_id=req.patient_id,
+                patient_id=effective_patient_id,
                 session_id=thread_id,
                 role=user_role,
                 custom_prompt=req.prompt
@@ -152,17 +169,24 @@ def process_chat_request(
             if res.get("attestation_status") == "PENDING_APPROVAL":
                 pending_actions = res.get("pending_actions", [])
                 first_act = pending_actions[0] if pending_actions else {}
+                action_type_label = (
+                    first_act.get("action_type", "UNKNOWN_ACTION")
+                    if len(pending_actions) <= 1
+                    else f"MULTIPLE_ACTIONS ({len(pending_actions)} items)"
+                )
                 ticket = ticket_manager.create_ticket(
                     thread_id=thread_id,
-                    patient_id=req.patient_id,
-                    action_type=first_act.get("action_type", "UNKNOWN_ACTION"),
+                    patient_id=effective_patient_id,
+                    action_type=action_type_label,
                     action_params=first_act,
+                    pending_actions=pending_actions,
                     estimated_eta="15 minutes (Clinician Queue)"
                 )
                 res["status"] = "AWAITING_CLINICIAN_APPROVAL"
                 res["ticket"] = ticket.model_dump()
+                res["pending_actions"] = pending_actions
                 res["pending_action"] = {
-                    "action_type": first_act.get("action_type", "UNKNOWN_ACTION"),
+                    "action_type": action_type_label,
                     "params": first_act
                 }
             
@@ -175,7 +199,7 @@ def process_chat_request(
         else:
             # Multi-agent standard pipeline
             initial_state = {
-                "patient_id": req.patient_id,
+                "patient_id": effective_patient_id,
                 "user_prompt": req.prompt,
                 "next_node": "IngestionAgent"
             }
@@ -237,9 +261,11 @@ def approve_ticket(
     
     # Resume LangGraph execution pipeline with positive attestation
     final_state = resume_hitl_agent_pipeline(ticket.thread_id, approved=True)
+    exec_count = len(final_state.get("execution_results", []))
+    order_label = f"{exec_count} clinical orders" if exec_count > 1 else "Order"
     return {
         "status": "APPROVED",
-        "message": f"Ticket {req.ticket_id} approved. Order executed successfully.",
+        "message": f"Ticket {req.ticket_id} approved. {order_label} executed successfully.",
         "ticket": ticket_manager.get_ticket_by_id(req.ticket_id).model_dump(),
         "final_state": final_state
     }
@@ -300,3 +326,44 @@ def list_audit_incidents(limit: int = 50):
         "total_incidents": len(incidents),
         "incidents": incidents
     }
+
+
+@app.get("/api/audit/traces")
+def list_audit_traces(limit: int = 50):
+    """
+    Retrieve all recorded transaction traces illustrating how instructions traveled through the platform.
+    """
+    trace_ids = audit_tracker.list_transaction_traces()
+    traces = []
+    for tid in trace_ids[:limit]:
+        tr = audit_tracker.get_transaction_trace(tid)
+        if tr:
+            traces.append(tr)
+    return {
+        "total_traces": len(traces),
+        "traces": traces
+    }
+
+
+@app.get("/api/audit/traces/{trace_id}")
+def get_audit_trace(trace_id: str):
+    """
+    Retrieve a specific transaction journey trace by trace ID.
+    """
+    trace = audit_tracker.get_transaction_trace(trace_id)
+    if not trace:
+        raise HTTPException(status_code=404, detail=f"Transaction trace '{trace_id}' not found.")
+    return trace
+
+
+@app.get("/api/audit/journey-log")
+def get_journey_log():
+    """
+    Retrieve the append-only human-readable transaction journey audit log.
+    """
+    traces_dir = audit_tracker.reports_dir.parent / "transaction_traces"
+    log_path = traces_dir / "audit_journey.log"
+    if not log_path.exists():
+        return {"log": "No transaction journey logs recorded yet."}
+    with open(log_path, "r", encoding="utf-8") as f:
+        return {"log": f.read()}

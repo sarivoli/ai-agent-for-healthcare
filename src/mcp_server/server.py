@@ -4,7 +4,7 @@ Exposes clinical tools for FHIR Demographics, Lab Results, Medications, and Clin
 """
 
 import json
-from typing import Optional
+from typing import Optional, Any
 from mcp.server.fastmcp import FastMCP
 from src.db.mock_healthcare_db import db
 from src.security.action_validator import validate_patient_id, ActionValidationError
@@ -105,6 +105,19 @@ def add_care_gap_remediation(patient_id: str, gap_id: str, action_taken: str) ->
     try:
         clean_id = validate_patient_id(patient_id)
         res = db.add_care_gap_remediation(clean_id, gap_id, action_taken)
+        return json.dumps(res, indent=2)
+    except ActionValidationError as e:
+        return json.dumps({"status": "validation_error", "message": str(e)})
+
+
+@mcp_server.tool(
+    name="add_lab_result",
+    description="Prompt-driven CRUD: Records a new clinical lab result or observation for a patient_id."
+)
+def add_lab_result(patient_id: str, test_name: str, value: Any, unit: str = "", loinc: str = "") -> str:
+    try:
+        clean_id = validate_patient_id(patient_id)
+        res = db.add_lab_result(clean_id, test_name, value, unit, loinc)
         return json.dumps(res, indent=2)
     except ActionValidationError as e:
         return json.dumps({"status": "validation_error", "message": str(e)})
